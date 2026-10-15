@@ -32,13 +32,15 @@ On `StartFrame` the processor posts `{}` to `POST /api/live-sessions/<session_id
 
 ## Example
 
-`examples/foundational.py` is a Daily bot: speech-to-text, a model, speech output, then `AkapuluAvatar`. It greets when the Daily client connects.
+`examples/foundational.py` creates a private Daily room, mints the browser, bot, and avatar tokens, and `POST`s `/api/live-sessions/`. It then runs speech-to-text, a model, speech output, and `AkapuluAvatar`. It prints a join URL. Open that URL. The bot greets when you join, and it listens only to that browser microphone.
+
+A GPT Live bot, a local server, and a browser page are in [akapulu-examples](https://github.com/Akapulu/akapulu-examples).
 
 ```bash
 uv add "pipecat-ai[daily,deepgram,cartesia,google,silero]==1.12.0" pipecat-akapulu
 ```
 
-Set `DAILY_ROOM_URL`, `DAILY_TOKEN`, and `AKAPULU_SESSION_ID` from the session you created. Also set `DEEPGRAM_API_KEY`, `GOOGLE_API_KEY`, and `CARTESIA_API_KEY`. Then:
+Set `DAILY_API_KEY`, `AKAPULU_API_KEY`, `AKAPULU_AVATAR_ID`, and `AKAPULU_SHOW_AI_LABEL` (`true` or `false`). Also set `DEEPGRAM_API_KEY`, `GOOGLE_API_KEY`, and `CARTESIA_API_KEY`. Then:
 
 ```bash
 python examples/foundational.py
