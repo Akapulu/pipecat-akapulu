@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
 - Idle becomes speech on the first output chunk above the speaking threshold. `TTSStoppedFrame` still waits `tail_secs` and then flushes.
 - `examples/foundational.py` creates the Daily room and the Akapulu session, then prints a join URL.
 
