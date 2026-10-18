@@ -195,6 +195,70 @@ async def test_idle_opens_on_loud_audio_not_tts_started() -> None:
         raise RuntimeError("a second loud chunk started another turn")
 
 
+async def test_threshold_sample_stays_idle() -> None:
+    tap = _tap("wss://example.invalid/live")
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        return None
+
+    tap.push_frame = push
+    tap._audio = _Audio()
+    await _push_audio(tap, _pcm(20))
+    if tap._accept_audio or tap._audio.sent:
+        raise RuntimeError("a sample at the speaking threshold opened the gate")
+    await _push_audio(tap, _pcm(21))
+    if not tap._accept_audio or tap._turn != 1:
+        raise RuntimeError("a sample above the speaking threshold stayed idle")
+
+
+async def test_loud_audio_during_tail_cancels_the_lock() -> None:
+    tap = _tap("wss://example.invalid/live")
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        return None
+
+    tap.push_frame = push
+    tap._audio = _Audio()
+    await _push_audio(tap, _pcm(1000))
+    hold = asyncio.Event()
+    cancelled = []
+
+    def create_task(coroutine, name=None):
+        coroutine.close()
+        return asyncio.get_running_loop().create_task(hold.wait(), name=name)
+
+    async def cancel_task(task, timeout=None):
+        cancelled.append(task)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    tap.create_task = create_task
+    tap.cancel_task = cancel_task
+    await tap.process_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
+    tail = tap._tail_task
+    if tail is None or tail.done():
+        raise RuntimeError("tail was not pending")
+
+    quiet = _pcm(0)
+    await _push_audio(tap, quiet)
+    if cancelled or tap._tail_task is not tail or not tap._accept_audio:
+        raise RuntimeError("quiet audio during the tail changed the lock")
+    if tap._tail_bytes != len(quiet):
+        raise RuntimeError(f"tail bytes were {tap._tail_bytes}")
+
+    await _push_audio(tap, _pcm(1000))
+    if cancelled != [tail] or tap._tail_task is not None or tap._tail_bytes != 0:
+        raise RuntimeError("loud audio did not cancel the pending lock")
+    if not tap._accept_audio or tap._turn != 1:
+        raise RuntimeError("loud audio during the tail closed the gate or started a turn")
+    speaking = [message for message in tap._audio.sent if isinstance(message, str)]
+    if speaking != [json.dumps({"type": "speaking", "who": "bot", "state": "started"})]:
+        raise RuntimeError(f"speaking was {speaking}")
+
+
 async def test_tts_stopped_still_schedules_the_tail() -> None:
     tap = _tap("wss://example.invalid/live")
 
@@ -517,6 +581,8 @@ async def main() -> None:
     await test_video_url_is_rejected()
     await test_daily_message()
     await test_idle_opens_on_loud_audio_not_tts_started()
+    await test_threshold_sample_stays_idle()
+    await test_loud_audio_during_tail_cancels_the_lock()
     await test_tts_stopped_still_schedules_the_tail()
     await test_ingest_packet()
     print("AKAPULU_AVATAR_ROOM_OK")
