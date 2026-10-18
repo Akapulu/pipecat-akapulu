@@ -22,7 +22,7 @@ from pipecat_akapulu import AkapuluAvatar
 avatar = AkapuluAvatar(sample_rate=24000, session_id=session_id)
 ```
 
-`sample_rate` is a positive multiple of 25 and must match the assistant audio frames. `tail_secs` defaults to `0.6`, which is how long assistant audio stays open after speech stops.
+`sample_rate` is a positive multiple of 25 and must match the assistant audio frames. Idle becomes speech on the first output chunk above the speaking threshold. `tail_secs` defaults to `0.6`, which is how long assistant audio stays open after `TTSStoppedFrame`.
 
 Leave transport audio out and video out off. The worker is the Daily publisher for the face and the played audio.
 

@@ -4,8 +4,9 @@ The worker joins the Daily room stored on the session and publishes the
 face and the played audio there. This tap does not decode JPEGs and does
 not push pictures or playback audio.
 
-Open it with session_id and sample_rate. tail_secs defaults to 0.6, which
-is how long assistant audio stays open after TTS stops.
+Open it with session_id and sample_rate. Idle becomes speech on the first
+output chunk louder than the speaking threshold. tail_secs defaults to 0.6,
+which is how long assistant audio stays open after TTS stops.
 
 Worker lookup uses the production Django origin. Set AKAPULU_API_URL to an
 http(s) origin to use another API. A set value that is empty or not http(s)
@@ -42,6 +43,7 @@ import uuid
 from loguru import logger
 from websockets.asyncio.client import connect
 
+from pipecat.audio.utils import is_silence
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.frames.frames import (
@@ -53,7 +55,6 @@ from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
     OutputAudioRawFrame,
     StartFrame,
-    TTSStartedFrame,
     TTSStoppedFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
@@ -61,6 +62,12 @@ from pipecat.frames.frames import (
 
 CHANNELS = 1
 _PROD_DJANGO_ORIGIN = "https://akapulu.com"
+
+
+def _pcm_is_loud(pcm: bytes) -> bool:
+    if len(pcm) < 2:
+        return False
+    return not is_silence(pcm)
 
 
 def _django_origin() -> str:
@@ -170,31 +177,7 @@ class AkapuluAvatar(FrameProcessor):
             for status_frame in queued:
                 await self.push_frame(status_frame)
             return
-        if isinstance(frame, TTSStartedFrame):
-            gate_was_open = self._accept_audio
-            if self._tail_task is not None and not self._tail_task.done():
-                await self.cancel_task(self._tail_task)
-                self._tail_task = None
-                logger.info(
-                    "akapulu avatar next utterance kept the gate open tail_bytes={}",
-                    self._tail_bytes,
-                )
-            if not gate_was_open:
-                self._gate_bytes = 0
-                self._gate_opened_at = time.perf_counter()
-            self._accept_audio = True
-            self._dropped_bytes = 0
-            self._tail_bytes = 0
-            self._cut_sent = False
-            logger.info("akapulu avatar audio unlocked")
-            if not self._in_bot_turn:
-                self._begin_turn()
-            await self._send_speaking("bot", "started")
-            started = BotStartedSpeakingFrame()
-            await self.push_frame(started, FrameDirection.UPSTREAM)
-            await self.push_frame(started)
-            logger.info("akapulu avatar sent bot-started-speaking")
-        elif isinstance(frame, TTSStoppedFrame):
+        if isinstance(frame, TTSStoppedFrame):
             self._tts_stopped_at = time.perf_counter()
             self._log_audio_end_hint("tts_stopped")
             stopped = BotStoppedSpeakingFrame()
@@ -216,18 +199,29 @@ class AkapuluAvatar(FrameProcessor):
         if isinstance(frame, (EndFrame, CancelFrame)):
             await self._close()
         elif isinstance(frame, OutputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
+            loud = _pcm_is_loud(frame.audio)
+            if not self._accept_audio:
+                if not loud:
+                    before = self._dropped_bytes
+                    self._dropped_bytes += len(frame.audio)
+                    stride = self._sample_rate * 2
+                    if before == 0 or before // stride != self._dropped_bytes // stride:
+                        logger.info(
+                            "akapulu avatar audio dropped while locked bytes={}",
+                            self._dropped_bytes,
+                        )
+                    return
+                await self._open_from_idle()
+            elif loud and self._tail_task is not None and not self._tail_task.done():
+                await self.cancel_task(self._tail_task)
+                self._tail_task = None
+                logger.info(
+                    "akapulu avatar next utterance kept the gate open tail_bytes={}",
+                    self._tail_bytes,
+                )
+                self._tail_bytes = 0
             if self._tail_task is not None and not self._tail_task.done():
                 self._tail_bytes += len(frame.audio)
-            if not self._accept_audio:
-                before = self._dropped_bytes
-                self._dropped_bytes += len(frame.audio)
-                stride = self._sample_rate * 2
-                if before == 0 or before // stride != self._dropped_bytes // stride:
-                    logger.info(
-                        "akapulu avatar audio dropped while locked bytes={}",
-                        self._dropped_bytes,
-                    )
-                return
             await self._ingest(frame)
             return
         await self.push_frame(frame, direction)
@@ -439,6 +433,25 @@ class AkapuluAvatar(FrameProcessor):
             self._open_error = exc
         if not self._audio_ready.is_set():
             self._audio_ready.set()
+
+    async def _open_from_idle(self) -> None:
+        """Idle becomes speech. The stop and the tail flush stay on TTSStoppedFrame."""
+        if self._accept_audio:
+            raise RuntimeError("akapulu avatar opened from idle while the gate was open")
+        self._gate_bytes = 0
+        self._gate_opened_at = time.perf_counter()
+        self._accept_audio = True
+        self._dropped_bytes = 0
+        self._tail_bytes = 0
+        self._cut_sent = False
+        logger.info("akapulu avatar audio unlocked")
+        if not self._in_bot_turn:
+            self._begin_turn()
+        await self._send_speaking("bot", "started")
+        started = BotStartedSpeakingFrame()
+        await self.push_frame(started, FrameDirection.UPSTREAM)
+        await self.push_frame(started)
+        logger.info("akapulu avatar sent bot-started-speaking")
 
     def _begin_turn(self) -> None:
         if self._in_bot_turn:

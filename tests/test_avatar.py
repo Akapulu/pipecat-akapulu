@@ -7,7 +7,13 @@ import struct
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from pipecat.frames.frames import OutputAudioRawFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    OutputAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+)
+from pipecat.processors.frame_processor import FrameDirection
 from websockets.asyncio.server import serve
 
 from pipecat_akapulu.avatar import AkapuluAvatar, _PROD_DJANGO_ORIGIN, _django_origin
@@ -137,6 +143,80 @@ async def test_video_url_is_rejected() -> None:
             tap._status_task.cancel()
         server.close()
         await server.wait_closed()
+
+
+def _pcm(sample: int, count: int = 48) -> bytes:
+    return struct.pack("<h", sample) * count
+
+
+async def _push_audio(tap: AkapuluAvatar, pcm: bytes) -> None:
+    await tap.process_frame(
+        OutputAudioRawFrame(audio=pcm, sample_rate=24000, num_channels=1),
+        FrameDirection.DOWNSTREAM,
+    )
+
+
+async def test_idle_opens_on_loud_audio_not_tts_started() -> None:
+    tap = _tap("wss://example.invalid/live")
+    pushed = []
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        pushed.append(type(frame))
+
+    tap.push_frame = push
+    tap._audio = _Audio()
+    await tap.process_frame(TTSStartedFrame(), FrameDirection.DOWNSTREAM)
+    if tap._accept_audio or tap._audio.sent:
+        raise RuntimeError("TTSStarted opened the gate")
+    if pushed != [TTSStartedFrame]:
+        raise RuntimeError(f"TTSStarted was not forwarded: {pushed}")
+
+    await _push_audio(tap, _pcm(0))
+    if tap._accept_audio or tap._audio.sent:
+        raise RuntimeError("silence opened the gate")
+
+    loud = _pcm(1000)
+    await _push_audio(tap, loud)
+    if not tap._accept_audio or tap._turn != 1:
+        raise RuntimeError(f"loud audio did not open turn={tap._turn} accept={tap._accept_audio}")
+    speaking = [message for message in tap._audio.sent if isinstance(message, str)]
+    if speaking != [json.dumps({"type": "speaking", "who": "bot", "state": "started"})]:
+        raise RuntimeError(f"speaking start was {speaking}")
+    packets = [message for message in tap._audio.sent if isinstance(message, bytes)]
+    if len(packets) != 1 or packets[0][5:] != loud:
+        raise RuntimeError("loud chunk was not ingested")
+    started = [kind for kind in pushed if kind is BotStartedSpeakingFrame]
+    if len(started) != 2:
+        raise RuntimeError(f"bot started frames were {len(started)}")
+
+    await _push_audio(tap, loud)
+    speaking = [message for message in tap._audio.sent if isinstance(message, str)]
+    if len(speaking) != 1 or tap._turn != 1:
+        raise RuntimeError("a second loud chunk started another turn")
+
+
+async def test_tts_stopped_still_schedules_the_tail() -> None:
+    tap = _tap("wss://example.invalid/live")
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        return None
+
+    tap.push_frame = push
+    tap._audio = _Audio()
+    await _push_audio(tap, _pcm(1000))
+    scheduled = {}
+
+    def create_task(coroutine, name=None):
+        scheduled["name"] = name
+        coroutine.close()
+        return asyncio.get_running_loop().create_task(asyncio.sleep(0))
+
+    tap.create_task = create_task
+    await tap.process_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
+    if scheduled.get("name") != "akapulu-avatar-tail":
+        raise RuntimeError(f"tail task was {scheduled}")
+    if not tap._accept_audio:
+        raise RuntimeError("TTSStopped locked the gate before the tail")
 
 
 async def test_ingest_packet() -> None:
@@ -436,6 +516,8 @@ async def main() -> None:
     await test_poll_continues_after_the_url()
     await test_video_url_is_rejected()
     await test_daily_message()
+    await test_idle_opens_on_loud_audio_not_tts_started()
+    await test_tts_stopped_still_schedules_the_tail()
     await test_ingest_packet()
     print("AKAPULU_AVATAR_ROOM_OK")
 
