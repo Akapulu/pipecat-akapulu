@@ -29,6 +29,10 @@ Ingest audio, bot to worker:
   A + uint32 ingest sequence + pcm
 Speaking text on the audio socket:
   {"type":"speaking","who":"bot"|"user","state":"started"|"stopped"|"interrupted"}
+A loud chunk while the post-TTS tail is still running keeps the gate open.
+That chunk, and each bot utterance, go out as a text header and then the raw
+s16 bytes:
+  {"type":"bot_audio","kind":"reopen"|"utterance","turn":N,"index":N,"sample_rate":N,"nbytes":N}
 """
 
 import asyncio
@@ -39,6 +43,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+
+import numpy as np
 
 from loguru import logger
 from websockets.asyncio.client import connect
@@ -68,6 +74,13 @@ def _pcm_is_loud(pcm: bytes) -> bool:
     if len(pcm) < 2:
         return False
     return not is_silence(pcm)
+
+
+def _pcm_max_abs(pcm: bytes) -> int:
+    audio = np.frombuffer(pcm, dtype=np.int16)
+    if audio.size == 0:
+        raise RuntimeError("akapulu avatar audio frame is empty")
+    return int(np.abs(audio.astype(np.int32)).max())
 
 
 def _django_origin() -> str:
@@ -152,6 +165,8 @@ class AkapuluAvatar(FrameProcessor):
         self._dropped_bytes = 0
         self._tail_task: asyncio.Task | None = None
         self._tail_bytes = 0
+        self._utterance = bytearray()
+        self._reopen_index = 0
         self._cutting = False
         self._cut_sent = False
 
@@ -216,10 +231,13 @@ class AkapuluAvatar(FrameProcessor):
                 await self.cancel_task(self._tail_task)
                 self._tail_task = None
                 logger.info(
-                    "akapulu avatar next utterance kept the gate open tail_bytes={}",
+                    "akapulu avatar next utterance kept the gate open tail_bytes={} max_abs={}",
                     self._tail_bytes,
+                    _pcm_max_abs(frame.audio),
                 )
                 self._tail_bytes = 0
+                await self._send_bot_audio("reopen", self._turn, self._reopen_index, frame.audio)
+                self._reopen_index += 1
             if self._tail_task is not None and not self._tail_task.done():
                 self._tail_bytes += len(frame.audio)
             await self._ingest(frame)
@@ -440,9 +458,12 @@ class AkapuluAvatar(FrameProcessor):
             raise RuntimeError("akapulu avatar opened from idle while the gate was open")
         self._gate_bytes = 0
         self._gate_opened_at = time.perf_counter()
+        if self._utterance:
+            raise RuntimeError("akapulu avatar opened a turn with an unsent utterance")
         self._accept_audio = True
         self._dropped_bytes = 0
         self._tail_bytes = 0
+        self._reopen_index = 0
         self._cut_sent = False
         logger.info("akapulu avatar audio unlocked")
         if not self._in_bot_turn:
@@ -492,6 +513,7 @@ class AkapuluAvatar(FrameProcessor):
             self._tail_bytes,
         )
         await self._send_speaking("bot", "stopped")
+        await self._send_utterance()
         if self._in_bot_turn:
             self._end_turn()
 
@@ -506,6 +528,7 @@ class AkapuluAvatar(FrameProcessor):
         self._cut_sent = True
         self._cutting = True
         logger.info("akapulu avatar interrupt")
+        await self._send_utterance()
         await self._send_speaking("bot", "interrupted")
         stopped = BotStoppedSpeakingFrame()
         await self.push_frame(stopped, FrameDirection.UPSTREAM)
@@ -573,6 +596,45 @@ class AkapuluAvatar(FrameProcessor):
             since_tts_ms,
         )
 
+    async def _send_utterance(self) -> None:
+        pcm = bytes(self._utterance)
+        if not pcm:
+            return
+        if self._turn < 1:
+            raise RuntimeError("akapulu avatar utterance has no turn")
+        await self._send_bot_audio("utterance", self._turn, 0, pcm)
+        self._utterance.clear()
+
+    async def _send_bot_audio(self, kind: str, turn: int, index: int, pcm: bytes) -> None:
+        if kind not in ("reopen", "utterance"):
+            raise RuntimeError(f"akapulu avatar bot audio kind {kind!r}")
+        if turn < 1 or index < 0:
+            raise RuntimeError(f"akapulu avatar bot audio turn={turn} index={index}")
+        if len(pcm) < 2 or len(pcm) % 2:
+            raise RuntimeError(f"akapulu avatar bot audio length {len(pcm)} is not s16")
+        header = json.dumps(
+            {
+                "type": "bot_audio",
+                "kind": kind,
+                "turn": turn,
+                "index": index,
+                "sample_rate": self._sample_rate,
+                "nbytes": len(pcm),
+            }
+        )
+        async with self._audio_send_lock:
+            if self._audio is None:
+                raise RuntimeError("akapulu avatar bot audio socket is not open")
+            await self._audio.send(header)
+            await self._audio.send(pcm)
+        logger.info(
+            "akapulu avatar sent bot audio kind={} turn={} index={} bytes={}",
+            kind,
+            turn,
+            index,
+            len(pcm),
+        )
+
     async def _send_or_queue(self, message: bytes | str) -> None:
         async with self._audio_send_lock:
             if self._audio is None:
@@ -589,6 +651,7 @@ class AkapuluAvatar(FrameProcessor):
                 f"got {frame.sample_rate} Hz {frame.num_channels} ch"
             )
         self._gate_bytes += len(frame.audio)
+        self._utterance.extend(frame.audio)
         seq = self._seq
         self._seq += 1
         t_send = time.perf_counter()
@@ -632,6 +695,7 @@ class AkapuluAvatar(FrameProcessor):
         if self._closed:
             return
         self._closed = True
+        await self._send_utterance()
         if self._open_task is not None and not self._open_task.done():
             await self.cancel_task(self._open_task)
         if self._updates_task is not None and not self._updates_task.done():

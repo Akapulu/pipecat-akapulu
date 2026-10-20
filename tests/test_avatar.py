@@ -249,14 +249,55 @@ async def test_loud_audio_during_tail_cancels_the_lock() -> None:
     if tap._tail_bytes != len(quiet):
         raise RuntimeError(f"tail bytes were {tap._tail_bytes}")
 
-    await _push_audio(tap, _pcm(1000))
+    reopen = _pcm(1000)
+    await _push_audio(tap, reopen)
     if cancelled != [tail] or tap._tail_task is not None or tap._tail_bytes != 0:
         raise RuntimeError("loud audio did not cancel the pending lock")
     if not tap._accept_audio or tap._turn != 1:
         raise RuntimeError("loud audio during the tail closed the gate or started a turn")
-    speaking = [message for message in tap._audio.sent if isinstance(message, str)]
+    speaking = [
+        message
+        for message in tap._audio.sent
+        if isinstance(message, str) and json.loads(message).get("type") == "speaking"
+    ]
     if speaking != [json.dumps({"type": "speaking", "who": "bot", "state": "started"})]:
         raise RuntimeError(f"speaking was {speaking}")
+    headers = [
+        json.loads(message)
+        for message in tap._audio.sent
+        if isinstance(message, str) and json.loads(message).get("type") == "bot_audio"
+    ]
+    if headers != [
+        {
+            "type": "bot_audio",
+            "kind": "reopen",
+            "turn": 1,
+            "index": 0,
+            "sample_rate": 24000,
+            "nbytes": len(reopen),
+        }
+    ]:
+        raise RuntimeError(f"reopen header was {headers}")
+    raw = [message for message in tap._audio.sent if isinstance(message, bytes) and not message.startswith(b"A")]
+    if raw != [reopen]:
+        raise RuntimeError(f"reopen pcm was {raw!r}")
+
+    await tap._close()
+    headers = [
+        json.loads(message)
+        for message in tap._audio.sent
+        if isinstance(message, str) and json.loads(message).get("type") == "bot_audio"
+    ]
+    if [header["kind"] for header in headers] != ["reopen", "utterance"]:
+        raise RuntimeError(f"bot audio kinds were {headers}")
+    utterance = headers[1]
+    if utterance["turn"] != 1 or utterance["index"] != 0:
+        raise RuntimeError(f"utterance header was {utterance}")
+    bodies = [message for message in tap._audio.sent if isinstance(message, bytes) and not message.startswith(b"A")]
+    if len(bodies) != 2 or bodies[0] != reopen or len(bodies[1]) != utterance["nbytes"]:
+        raise RuntimeError("utterance pcm was not sent")
+    if bodies[1][-len(reopen):] != reopen:
+        raise RuntimeError("utterance does not end with the reopen frame")
 
 
 async def test_tts_stopped_still_schedules_the_tail() -> None:
