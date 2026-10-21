@@ -5,8 +5,9 @@ face and the played audio there. This tap does not decode JPEGs and does
 not push pictures or playback audio.
 
 Open it with session_id and sample_rate. Idle becomes speech on the first
-output chunk louder than the speaking threshold. tail_secs defaults to 0.6,
-which is how long assistant audio stays open after TTS stops.
+output chunk louder than the speaking threshold. tail_secs defaults to 0.6.
+TTS stop starts that wait, and another loud chunk starts it over. The gate
+locks when the wait finishes.
 
 Worker lookup uses the production Django origin. Set AKAPULU_API_URL to an
 http(s) origin to use another API. A set value that is empty or not http(s)
@@ -42,6 +43,7 @@ import uuid
 
 from loguru import logger
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosedOK
 
 from pipecat.audio.utils import is_silence
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
@@ -91,7 +93,8 @@ class AkapuluAvatar(FrameProcessor):
     """Forward assistant audio. The GPU worker publishes the face into Daily.
 
     Pass session_id and sample_rate. The room and the avatar token are
-    already on that session. tail_secs defaults to 0.6.
+    already on that session. tail_secs defaults to 0.6. TTS stop starts
+    that wait, and another loud chunk starts it over.
     """
 
     def __init__(
@@ -213,13 +216,14 @@ class AkapuluAvatar(FrameProcessor):
                     return
                 await self._open_from_idle()
             elif loud and self._tail_task is not None and not self._tail_task.done():
+                # One more loud chunk is still this utterance, or the next one
+                # starting inside the wait. Cancelling the timer and leaving it
+                # unset holds the gate open for the rest of the call when no
+                # later TTSStopped arrives. Start the same wait over.
                 await self.cancel_task(self._tail_task)
-                self._tail_task = None
-                logger.info(
-                    "akapulu avatar next utterance kept the gate open tail_bytes={}",
-                    self._tail_bytes,
-                )
                 self._tail_bytes = 0
+                self._tail_task = self.create_task(self._lock_after_tail(), "akapulu-avatar-tail")
+                logger.info("akapulu avatar tail restarted")
             if self._tail_task is not None and not self._tail_task.done():
                 self._tail_bytes += len(frame.audio)
             await self._ingest(frame)
@@ -549,6 +553,10 @@ class AkapuluAvatar(FrameProcessor):
                 raise RuntimeError("akapulu avatar audio socket received playback bytes")
         except asyncio.CancelledError:
             raise
+        except ConnectionClosedOK:
+            if not self._closed:
+                logger.info("akapulu avatar audio socket closed")
+            return
         except Exception as exc:
             self._fail_reader(exc)
 

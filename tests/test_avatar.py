@@ -13,6 +13,7 @@ from pipecat.frames.frames import (
     TTSStartedFrame,
     TTSStoppedFrame,
 )
+from loguru import logger
 from pipecat.processors.frame_processor import FrameDirection
 from websockets.asyncio.server import serve
 
@@ -211,7 +212,7 @@ async def test_threshold_sample_stays_idle() -> None:
         raise RuntimeError("a sample above the speaking threshold stayed idle")
 
 
-async def test_loud_audio_during_tail_cancels_the_lock() -> None:
+async def test_loud_audio_during_tail_restarts_the_lock() -> None:
     tap = _tap("wss://example.invalid/live")
 
     async def push(frame, direction=FrameDirection.DOWNSTREAM):
@@ -249,14 +250,75 @@ async def test_loud_audio_during_tail_cancels_the_lock() -> None:
     if tap._tail_bytes != len(quiet):
         raise RuntimeError(f"tail bytes were {tap._tail_bytes}")
 
-    await _push_audio(tap, _pcm(1000))
-    if cancelled != [tail] or tap._tail_task is not None or tap._tail_bytes != 0:
-        raise RuntimeError("loud audio did not cancel the pending lock")
+    loud = _pcm(1000)
+    await _push_audio(tap, loud)
+    restarted = tap._tail_task
+    if cancelled != [tail] or restarted is None or restarted is tail or restarted.done():
+        raise RuntimeError(
+            f"loud audio did not restart the tail cancelled={cancelled!r} restarted={restarted!r}"
+        )
+    if restarted.get_name() != "akapulu-avatar-tail":
+        raise RuntimeError(f"restarted tail was {restarted.get_name()}")
+    if tap._tail_bytes != len(loud):
+        raise RuntimeError(f"tail bytes were {tap._tail_bytes}")
     if not tap._accept_audio or tap._turn != 1:
         raise RuntimeError("loud audio during the tail closed the gate or started a turn")
     speaking = [message for message in tap._audio.sent if isinstance(message, str)]
     if speaking != [json.dumps({"type": "speaking", "who": "bot", "state": "started"})]:
         raise RuntimeError(f"speaking was {speaking}")
+
+
+def _close_frame(code: int, reason: str):
+    from websockets.frames import Close
+
+    return Close(code, reason)
+
+
+class _ClosingAudio(_Audio):
+    def __init__(self, exc: BaseException):
+        super().__init__()
+        self._exc = exc
+
+    async def recv(self):
+        raise self._exc
+
+
+async def test_clean_audio_close_is_not_a_reader_error() -> None:
+    from websockets.exceptions import ConnectionClosedOK
+
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _ClosingAudio(
+        ConnectionClosedOK(_close_frame(1001, "going away"), _close_frame(1001, "going away"), True)
+    )
+    errors = []
+    handle = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+    try:
+        await tap._read_audio()
+        if tap._reader_error is not None:
+            raise RuntimeError(f"clean close was stored as {tap._reader_error!r}")
+        await tap._close()
+    finally:
+        logger.remove(handle)
+    if errors:
+        raise RuntimeError(f"clean close logged {errors}")
+
+
+async def test_unexpected_audio_close_is_a_reader_error() -> None:
+    from websockets.exceptions import ConnectionClosedError
+
+    exc = ConnectionClosedError(_close_frame(1011, "internal"), None)
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _ClosingAudio(exc)
+    errors = []
+    handle = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+    try:
+        await tap._read_audio()
+    finally:
+        logger.remove(handle)
+    if tap._reader_error is not exc:
+        raise RuntimeError(f"unexpected close was stored as {tap._reader_error!r}")
+    if not any("akapulu avatar reader failed" in message for message in errors):
+        raise RuntimeError(f"unexpected close logged {errors}")
 
 
 async def test_tts_stopped_still_schedules_the_tail() -> None:
@@ -582,7 +644,9 @@ async def main() -> None:
     await test_daily_message()
     await test_idle_opens_on_loud_audio_not_tts_started()
     await test_threshold_sample_stays_idle()
-    await test_loud_audio_during_tail_cancels_the_lock()
+    await test_loud_audio_during_tail_restarts_the_lock()
+    await test_clean_audio_close_is_not_a_reader_error()
+    await test_unexpected_audio_close_is_a_reader_error()
     await test_tts_stopped_still_schedules_the_tail()
     await test_ingest_packet()
     print("AKAPULU_AVATAR_ROOM_OK")
