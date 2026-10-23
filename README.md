@@ -2,7 +2,7 @@
 
 Pipecat processor for an [Akapulu Labs](https://akapulu.com) talking avatar. Maintained by Akapulu Labs.
 
-`AkapuluAvatar` is a Pipecat plugin. Put it after your speech model. It sends assistant audio to the Akapulu Labs worker. The Akapulu Labs worker joins the Daily room already stored on the session and publishes the face and the played audio. The plugin does not publish either.
+The `AkapuluAvatar` Pipecat plugin sits after your speech model. It sends assistant audio to the Akapulu Labs worker. The Akapulu Labs worker joins the Daily room already stored on the session and publishes the face and the played audio. It does not publish either.
 
 Tested with Pipecat 1.12.0.
 
@@ -26,7 +26,7 @@ avatar = AkapuluAvatar(sample_rate=24000, session_id=session_id)
 
 Leave transport audio out and video out off. The Akapulu Labs worker is the Daily publisher for the face and the played audio.
 
-`AkapuluAvatar` is a Pipecat plugin. It connects to the Akapulu Labs worker in the background. When the pipeline starts, it forwards `StartFrame` right away so your voice bot keeps moving. It does not wait for the first face frame.
+The `AkapuluAvatar` Pipecat plugin connects to the Akapulu Labs worker in the background. When the pipeline starts, it forwards `StartFrame` right away so your voice bot keeps moving. It does not wait for the first face frame.
 
 While the Akapulu Labs worker boots, the plugin pushes **RTVI server messages** into your voice-bot pipeline. Each message body has `type` `status` and these fields:
 
