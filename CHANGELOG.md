@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-23
+
+- The post-speech tail treats a normal audio-socket close (code 1000 or 1001) as the call ending, and close cancels that tail. Pipecat no longer logs it as an unexpected exception.
+
 ## [0.1.4] - 2026-10-21
 
 - A clean close of the audio socket stops the reader. `ConnectionClosedOK`, including close code 1001, is not logged as an error. An unexpected close still is.

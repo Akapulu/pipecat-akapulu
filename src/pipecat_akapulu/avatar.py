@@ -487,7 +487,7 @@ class AkapuluAvatar(FrameProcessor):
     async def _lock_after_tail(self) -> None:
         await asyncio.sleep(self._tail_secs)
         self._tail_task = None
-        if not self._accept_audio:
+        if self._closed or not self._accept_audio:
             return
         self._accept_audio = False
         self._log_audio_end_hint("worker_stopped")
@@ -495,7 +495,11 @@ class AkapuluAvatar(FrameProcessor):
             "akapulu avatar audio locked after tail tail_bytes={}",
             self._tail_bytes,
         )
-        await self._send_speaking("bot", "stopped")
+        try:
+            await self._send_speaking("bot", "stopped")
+        except ConnectionClosedOK:
+            if not self._closed:
+                logger.info("akapulu avatar audio socket closed")
         if self._in_bot_turn:
             self._end_turn()
 
@@ -649,6 +653,9 @@ class AkapuluAvatar(FrameProcessor):
         for sock in (self._audio, self._session):
             if sock is not None:
                 await sock.close()
+        if self._tail_task is not None and not self._tail_task.done():
+            await self.cancel_task(self._tail_task)
+            self._tail_task = None
         if self._audio_reader is not None and not self._audio_reader.done():
             await self.cancel_task(self._audio_reader)
         if self._reader_error is not None:

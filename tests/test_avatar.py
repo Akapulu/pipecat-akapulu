@@ -283,6 +283,95 @@ class _ClosingAudio(_Audio):
         raise self._exc
 
 
+class _SendRaises(_Audio):
+    def __init__(self, exc: BaseException):
+        super().__init__()
+        self._exc = exc
+
+    async def send(self, message):
+        self.sent.append(message)
+        if isinstance(message, str) and '"stopped"' in message:
+            raise self._exc
+
+
+async def test_tail_normal_close_is_not_an_error() -> None:
+    from websockets.exceptions import ConnectionClosedOK
+
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _SendRaises(
+        ConnectionClosedOK(_close_frame(1001, "going away"), _close_frame(1001, "going away"), True)
+    )
+    tap._accept_audio = True
+    tap._in_bot_turn = True
+    tap._turn = 1
+    tap._tail_secs = 0
+    errors = []
+    handle = logger.add(lambda message: errors.append(str(message)), level="ERROR")
+    try:
+        await tap._lock_after_tail()
+    finally:
+        logger.remove(handle)
+    if errors:
+        raise RuntimeError(f"tail normal close logged {errors}")
+    if tap._accept_audio or tap._in_bot_turn:
+        raise RuntimeError("tail normal close left the utterance open")
+    stopped = [
+        message
+        for message in tap._audio.sent
+        if isinstance(message, str) and '"stopped"' in message
+    ]
+    if len(stopped) != 1:
+        raise RuntimeError(f"tail stopped send was {stopped}")
+
+
+async def test_tail_unexpected_close_still_raises() -> None:
+    from websockets.exceptions import ConnectionClosedError
+
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _SendRaises(ConnectionClosedError(_close_frame(1011, "internal"), None))
+    tap._accept_audio = True
+    tap._in_bot_turn = True
+    tap._tail_secs = 0
+    try:
+        await tap._lock_after_tail()
+    except ConnectionClosedError:
+        pass
+    else:
+        raise RuntimeError("tail unexpected close was swallowed")
+    if tap._in_bot_turn is not True:
+        raise RuntimeError("tail unexpected close ended the turn")
+
+
+async def test_close_cancels_the_tail() -> None:
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _Audio()
+    tap._accept_audio = True
+    tap._tail_secs = 30
+    task = asyncio.create_task(tap._lock_after_tail())
+    tap._tail_task = task
+    cancelled = []
+
+    async def cancel_task(pending, timeout=None):
+        cancelled.append(pending)
+        pending.cancel()
+        try:
+            await pending
+        except asyncio.CancelledError:
+            pass
+
+    tap.cancel_task = cancel_task
+    await tap._close()
+    if cancelled != [task] or not task.done():
+        raise RuntimeError(f"close cancelled {cancelled!r} done={task.done()}")
+    stopped = [
+        message
+        for message in tap._audio.sent
+        if isinstance(message, str) and '"stopped"' in message
+    ]
+    if stopped:
+        raise RuntimeError(f"closed tail sent {stopped}")
+
+
 async def test_clean_audio_close_is_not_a_reader_error() -> None:
     from websockets.exceptions import ConnectionClosedOK
 
@@ -645,6 +734,9 @@ async def main() -> None:
     await test_idle_opens_on_loud_audio_not_tts_started()
     await test_threshold_sample_stays_idle()
     await test_loud_audio_during_tail_restarts_the_lock()
+    await test_tail_normal_close_is_not_an_error()
+    await test_tail_unexpected_close_still_raises()
+    await test_close_cancels_the_tail()
     await test_clean_audio_close_is_not_a_reader_error()
     await test_unexpected_audio_close_is_a_reader_error()
     await test_tts_stopped_still_schedules_the_tail()
