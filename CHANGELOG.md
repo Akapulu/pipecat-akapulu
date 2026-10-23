@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- README: say "The AkapuluAvatar Pipecat plugin" instead of "is a Pipecat plugin".
+
 - README: call `AkapuluAvatar` a Pipecat plugin; drop the Django poll note from loading copy.
 
 - README: spell out loading as RTVI server messages on the Daily call (StartFrame passes through; use status until call_is_ready).
