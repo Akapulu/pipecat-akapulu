@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- README: say Akapulu Labs worker, describe loading status for a loading UI, drop idle/tail_secs and AKAPULU_API_URL processor notes.
+- `examples/foundational.py` hardcodes Clara and This is AI off. Drop `AKAPULU_AVATAR_ID` and `AKAPULU_SHOW_AI_LABEL`.
+
 ## [0.1.5] - 2026-10-23
 
 - The post-speech tail treats a normal audio-socket close (code 1000 or 1001) as the call ending, and close cancels that tail. Pipecat no longer logs it as an unexpected exception.

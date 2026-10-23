@@ -1,9 +1,13 @@
 """Daily bot that publishes an Akapulu avatar from assistant audio.
 
-This file creates a private Daily room, mints the browser, bot, and avatar
-tokens, and POSTs /api/live-sessions/. It prints a join URL. Open that URL.
-Audio out and video out stay off. The Akapulu worker publishes the face and
-the played audio.
+This file creates a private Daily room, mints the browser, voice-bot, and
+Akapulu Labs worker tokens, and POSTs /api/live-sessions/ on the Akapulu
+Labs API. It prints a join URL. Open that URL. Audio out and video out stay
+off. The Akapulu Labs worker publishes the face and the played audio.
+
+Avatar, This is AI, and the Akapulu Labs API origin are fixed for this
+example. Set DAILY_API_KEY, AKAPULU_API_KEY, DEEPGRAM_API_KEY, GOOGLE_API_KEY,
+and CARTESIA_API_KEY.
 
 Tested with Pipecat 1.12.0.
 """
@@ -47,7 +51,10 @@ USER_JOIN_TIMEOUT_SECS = 180.0
 ROOM_TTL_SECS = 2 * 60 * 60
 USER_NAME = "You"
 AVATAR_NAME = "Avatar"
-_PROD_API_ORIGIN = "https://akapulu.com"
+# Clara (public catalog). This is AI off.
+AVATAR_ID = "1f777f64-3758-4a7d-9cbc-c64ae654f7d1"
+SHOW_AI_LABEL = False
+AKAPULU_API_ORIGIN = "https://akapulu.com"
 _DAILY_API = "https://api.daily.co/v1"
 
 
@@ -58,29 +65,15 @@ def _required(name: str) -> str:
     return value.strip()
 
 
-def api_origin(raw: str | None) -> str:
-    """API origin. Unset uses production. A set value must be http(s)."""
+def api_origin() -> str:
+    """Production by default. AKAPULU_API_URL overrides for harnesses."""
+    raw = os.environ.get("AKAPULU_API_URL")
     if raw is None:
-        return _PROD_API_ORIGIN
+        return AKAPULU_API_ORIGIN
     origin = raw.strip().rstrip("/")
     if not (origin.startswith("https://") or origin.startswith("http://")):
         raise RuntimeError("AKAPULU_API_URL must be an http(s) origin")
     return origin
-
-
-def show_ai_label(value: str) -> bool:
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise RuntimeError("AKAPULU_SHOW_AI_LABEL must be true or false")
-
-
-def avatar_id(value: str) -> str:
-    try:
-        return str(uuid.UUID(value))
-    except ValueError as exc:
-        raise RuntimeError("AKAPULU_AVATAR_ID must be a UUID") from exc
 
 
 def daily_api_url(raw: str | None) -> str:
@@ -102,20 +95,16 @@ def join_url(room_url: str, user_token: str) -> str:
 
 def live_session_body(
     *,
-    avatar: str,
-    label: bool,
     room_url: str,
     avatar_token: str,
 ) -> dict:
-    if not isinstance(label, bool):
-        raise RuntimeError("show_ai_label must be a boolean")
     if not isinstance(room_url, str) or not room_url.startswith("https://"):
         raise RuntimeError("Daily room url is missing")
     if not isinstance(avatar_token, str) or not avatar_token:
         raise RuntimeError("Daily avatar token is missing")
     return {
-        "avatar_id": avatar_id(avatar),
-        "show_ai_label": label,
+        "avatar_id": AVATAR_ID,
+        "show_ai_label": SHOW_AI_LABEL,
         "room_url": room_url,
         "avatar_token": avatar_token,
     }
@@ -185,9 +174,7 @@ async def create_call(session: aiohttp.ClientSession) -> tuple[str, str, str, st
     """Return room_url, bot token, browser token, and Akapulu session id."""
     daily_key = _required("DAILY_API_KEY")
     akapulu_key = _required("AKAPULU_API_KEY")
-    avatar = avatar_id(_required("AKAPULU_AVATAR_ID"))
-    label = show_ai_label(_required("AKAPULU_SHOW_AI_LABEL"))
-    origin = api_origin(os.environ.get("AKAPULU_API_URL"))
+    origin = api_origin()
     rest = DailyRESTHelper(
         daily_api_key=daily_key,
         daily_api_url=daily_api_url(os.environ.get("DAILY_API_URL")),
@@ -238,8 +225,6 @@ async def create_call(session: aiohttp.ClientSession) -> tuple[str, str, str, st
         ),
     )
     body = live_session_body(
-        avatar=avatar,
-        label=label,
         room_url=room_url,
         avatar_token=avatar_token,
     )
