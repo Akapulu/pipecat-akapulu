@@ -26,13 +26,15 @@ avatar = AkapuluAvatar(sample_rate=24000, session_id=session_id)
 
 Leave transport audio out and video out off. The Akapulu Labs worker is the Daily publisher for the face and the played audio.
 
-When the pipeline starts, `AkapuluAvatar` begins connecting in the background and forwards `StartFrame` right away so your voice bot keeps moving. While the Akapulu Labs worker comes up, it pushes Pipecat server messages with `type` `status`. Those messages include:
+`AkapuluAvatar` connects to the Akapulu Labs worker in the background. When the pipeline starts, it forwards `StartFrame` right away so your voice bot keeps moving. It does not wait for the first face frame.
+
+While the Akapulu Labs worker boots, `AkapuluAvatar` pushes Pipecat **RTVI server messages** into your voice-bot pipeline. Each message body has `type` `status` and these fields:
 
 - `call_is_ready`: whether the Akapulu Labs worker has published the first frame
 - `completion_percent`: how far startup has gotten (0 to 100)
 - `latest_update_text`: the latest human-readable startup line
 
-Use those fields for a loading UI. `AkapuluAvatar` handles startup status for you.
+Those are not Daily audio or video tracks. With RTVI on the call (for example `@pipecat-ai/client-js` in the browser), they arrive on the client as RTVI `ServerMessage` events over that same Daily connection. Use them for a loading spinner, percent, and copy. Keep the loading UI up until `call_is_ready` is true. The browser does not poll Django for this.
 
 ## Example
 
