@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- README: call `AkapuluAvatar` a Pipecat plugin; drop the Django poll note from loading copy.
+
 - README: spell out loading as RTVI server messages on the Daily call (StartFrame passes through; use status until call_is_ready).
 
 - README: say Akapulu Labs worker, describe loading status for a loading UI, drop idle/tail_secs and AKAPULU_API_URL processor notes.
