@@ -14,7 +14,7 @@ from pipecat.frames.frames import (
     TTSStoppedFrame,
 )
 from loguru import logger
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from websockets.asyncio.server import serve
 
 from pipecat_akapulu.avatar import AkapuluAvatar, _PROD_DJANGO_ORIGIN, _django_origin
@@ -25,9 +25,9 @@ SESSION = "11111111-1111-1111-1111-111111111111"
 
 def _tap(connect_url: str | None = None) -> AkapuluAvatar:
     tap = AkapuluAvatar(
-        sample_rate=24000,
         session_id=SESSION,
     )
+    tap._bind(24000)
     if connect_url is not None:
         async def _ready():
             return connect_url
@@ -372,6 +372,53 @@ async def test_close_cancels_the_tail() -> None:
         raise RuntimeError(f"closed tail sent {stopped}")
 
 
+async def test_cleanup_closes() -> None:
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _Audio()
+    from unittest.mock import AsyncMock, patch
+
+    with patch.object(FrameProcessor, "cleanup", new=AsyncMock()) as super_cleanup:
+        await tap.cleanup()
+        if not tap._closed:
+            raise RuntimeError("cleanup left the tap open")
+        super_cleanup.assert_awaited_once()
+        await tap.cleanup()
+        if not tap._closed:
+            raise RuntimeError("second cleanup reopened the tap")
+        if super_cleanup.await_count != 2:
+            raise RuntimeError("second cleanup skipped super")
+
+
+async def test_setup_binds_pipeline_rate() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    tap = AkapuluAvatar(session_id=SESSION)
+    created = {}
+
+    def create_task(coro, name=None):
+        created["name"] = name
+        coro.close()
+        return object()
+
+    tap.create_task = create_task
+    with patch.object(FrameProcessor, "setup", new=AsyncMock()):
+        await tap.setup(type("Setup", (), {"audio_out_sample_rate": 16000})())
+    if tap._sample_rate != 16000:
+        raise RuntimeError(f"setup bound {tap._sample_rate}")
+    if created.get("name") != "akapulu-avatar-open":
+        raise RuntimeError(f"setup open task was {created}")
+
+    bad = AkapuluAvatar(session_id=SESSION)
+    with patch.object(FrameProcessor, "setup", new=AsyncMock()):
+        try:
+            await bad.setup(type("Setup", (), {"audio_out_sample_rate": 24001})())
+        except RuntimeError as exc:
+            if "multiple of 25" not in str(exc):
+                raise
+        else:
+            raise RuntimeError("setup accepted a non-multiple sample rate")
+
+
 async def test_clean_audio_close_is_not_a_reader_error() -> None:
     from websockets.exceptions import ConnectionClosedOK
 
@@ -452,7 +499,6 @@ async def test_ingest_packet() -> None:
 
 def _kwargs(**overrides):
     values = dict(
-        sample_rate=24000,
         session_id=SESSION,
     )
     values.update(overrides)
@@ -484,6 +530,32 @@ def test_constructor_requires_session() -> None:
         pass
     else:
         raise RuntimeError("negative tail was accepted")
+    try:
+        AkapuluAvatar(sample_rate=24000, session_id=SESSION)
+    except TypeError:
+        pass
+    else:
+        raise RuntimeError("constructor still took sample_rate")
+
+
+def test_bind_requires_multiple_of_25() -> None:
+    tap = AkapuluAvatar(session_id=SESSION)
+    tap._bind(24000)
+    if tap._sample_rate != 24000:
+        raise RuntimeError(f"bound rate was {tap._sample_rate}")
+    try:
+        tap._bind(24001)
+    except RuntimeError as exc:
+        if "multiple of 25" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("non-multiple sample rate was accepted")
+    try:
+        tap._bind(0)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("zero sample rate was accepted")
 
 
 def _with_origin_env(value: str | None):
@@ -522,7 +594,7 @@ def test_django_origin() -> None:
     try:
         if _django_origin() != _PROD_DJANGO_ORIGIN:
             raise RuntimeError("unset AKAPULU_API_URL did not use the production origin")
-        tap = AkapuluAvatar(sample_rate=24000, session_id=SESSION)
+        tap = AkapuluAvatar(session_id=SESSION)
         url = tap._status_url()
         suffix = f"/api/live-sessions/{SESSION}/status/"
         if url != _PROD_DJANGO_ORIGIN + suffix:
@@ -534,7 +606,7 @@ def test_django_origin() -> None:
     try:
         if _django_origin() != "https://example.test":
             raise RuntimeError("AKAPULU_API_URL override was not used")
-        tap = AkapuluAvatar(sample_rate=24000, session_id=SESSION)
+        tap = AkapuluAvatar(session_id=SESSION)
         url = tap._status_url()
         expected = f"https://example.test/api/live-sessions/{SESSION}/status/"
         if url != expected:
@@ -699,7 +771,7 @@ def test_engine_joined_post() -> None:
     host, port = server.server_address
     saved = _with_origin_env(f"http://{host}:{port}")
     try:
-        tap = AkapuluAvatar(sample_rate=24000, session_id=SESSION)
+        tap = AkapuluAvatar(session_id=SESSION)
         tap._post_engine_joined()
         expected = (
             f"/api/live-sessions/{SESSION}/status/",
@@ -724,6 +796,9 @@ def test_engine_joined_post() -> None:
 
 async def main() -> None:
     test_constructor_requires_session()
+    test_bind_requires_multiple_of_25()
+    await test_setup_binds_pipeline_rate()
+    await test_cleanup_closes()
     test_django_origin()
     test_engine_joined_post()
     test_poll_does_not_rewind_socket_status()
