@@ -2,12 +2,14 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-24
+
+- Sample rate comes from `FrameProcessorSetup.audio_out_sample_rate` in `setup()`. `AkapuluAvatar` no longer takes `sample_rate`.
+- `cleanup()` closes the worker sockets. A cancel during setup does not send `CancelFrame`.
+- Pin is `pipecat-ai>=1.12.0`. Tested with Pipecat 1.14.0.
 - README: say "The AkapuluAvatar Pipecat plugin" instead of "is a Pipecat plugin".
-
 - README: call `AkapuluAvatar` a Pipecat plugin; drop the Django poll note from loading copy.
-
 - README: spell out loading as RTVI server messages on the Daily call (StartFrame passes through; use status until call_is_ready).
-
 - README: say Akapulu Labs worker, describe loading status for a loading UI, drop idle/tail_secs and AKAPULU_API_URL processor notes.
 - `examples/foundational.py` hardcodes Clara and This is AI off. Drop `AKAPULU_AVATAR_ID` and `AKAPULU_SHOW_AI_LABEL`.
 

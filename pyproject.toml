@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pipecat-akapulu"
-version = "0.1.5"
-description = "Pipecat processor that sends assistant audio to an Akapulu avatar."
+version = "0.1.6"
+description = "Pipecat processor that sends assistant audio to an Akapulu Labs avatar."
 readme = "README.md"
 license = "BSD-2-Clause"
 license-files = ["LICENSE"]
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
 ]
 dependencies = [
-    "pipecat-ai==1.12.0",
+    "pipecat-ai>=1.12.0",
     "websockets>=13.1,<16",
 ]
 

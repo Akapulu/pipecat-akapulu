@@ -4,8 +4,11 @@ The worker joins the Daily room stored on the session and publishes the
 face and the played audio there. This tap does not decode JPEGs and does
 not push pictures or playback audio.
 
-Open it with session_id and sample_rate. Idle becomes speech on the first
-output chunk louder than the speaking threshold. tail_secs defaults to 0.6.
+Open it with session_id. The sample rate is the pipeline audio-out rate,
+read in setup from FrameProcessorSetup.audio_out_sample_rate. It must be a
+positive multiple of 25 and match the assistant audio frames. Idle becomes
+speech on the first output chunk louder than the speaking threshold.
+tail_secs defaults to 0.6.
 TTS stop starts that wait, and another loud chunk starts it over. The gate
 locks when the wait finishes.
 
@@ -92,39 +95,29 @@ _SPEAKING = {
 class AkapuluAvatar(FrameProcessor):
     """Forward assistant audio. The GPU worker publishes the face into Daily.
 
-    Pass session_id and sample_rate. The room and the avatar token are
-    already on that session. tail_secs defaults to 0.6. TTS stop starts
-    that wait, and another loud chunk starts it over.
+    Pass session_id. The room and the avatar token are already on that
+    session. The sample rate is the pipeline audio-out rate, bound in
+    setup. tail_secs defaults to 0.6. TTS stop starts that wait, and
+    another loud chunk starts it over.
     """
 
     def __init__(
         self,
         *,
-        sample_rate: int,
         session_id: str,
         tail_secs: float = 0.6,
     ):
         super().__init__()
-        self._bind(sample_rate, tail_secs)
         if not isinstance(session_id, str) or not session_id:
             raise RuntimeError("akapulu avatar session_id is missing")
         try:
             self._session_id = str(uuid.UUID(session_id))
         except (TypeError, ValueError) as exc:
             raise RuntimeError("akapulu avatar session_id is missing") from exc
-
-    def _bind(
-        self,
-        sample_rate: int,
-        tail_secs: float,
-    ) -> None:
-        if sample_rate < 25 or sample_rate % 25 != 0:
-            raise RuntimeError(f"akapulu avatar sample rate {sample_rate} is not a positive multiple of 25")
         if tail_secs < 0:
             raise RuntimeError(f"akapulu avatar tail wait {tail_secs} is negative")
-        self._url = ""
-        self._sample_rate = sample_rate
         self._tail_secs = tail_secs
+        self._url = ""
         self._session = None
         self._audio = None
         self._audio_reader: asyncio.Task | None = None
@@ -158,11 +151,21 @@ class AkapuluAvatar(FrameProcessor):
         self._cutting = False
         self._cut_sent = False
 
+    def _bind(self, sample_rate: int) -> None:
+        if sample_rate < 25 or sample_rate % 25 != 0:
+            raise RuntimeError(f"akapulu avatar sample rate {sample_rate} is not a positive multiple of 25")
+        self._sample_rate = sample_rate
+
     async def setup(self, setup: FrameProcessorSetup):
         await super().setup(setup)
+        self._bind(setup.audio_out_sample_rate)
         # The worker socket can take the whole GPU boot. StartFrame has to
         # pass this processor first or the loading messages cannot be pushed.
         self._open_task = self.create_task(self._open(), "akapulu-avatar-open")
+
+    async def cleanup(self):
+        await self._close()
+        await super().cleanup()
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -231,6 +234,8 @@ class AkapuluAvatar(FrameProcessor):
         await self.push_frame(frame, direction)
 
     async def _open(self) -> None:
+        if not hasattr(self, "_sample_rate"):
+            raise RuntimeError("akapulu avatar setup has not bound the sample rate")
         if self._session is not None:
             return
         t0 = time.perf_counter()
@@ -593,6 +598,8 @@ class AkapuluAvatar(FrameProcessor):
             await self._audio.send(message)
 
     async def _ingest(self, frame: OutputAudioRawFrame) -> None:
+        if not hasattr(self, "_sample_rate"):
+            raise RuntimeError("akapulu avatar setup has not bound the sample rate")
         if self._reader_error is not None:
             raise self._reader_error
         if frame.sample_rate != self._sample_rate or frame.num_channels != CHANNELS:

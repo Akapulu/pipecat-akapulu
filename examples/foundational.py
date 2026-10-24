@@ -9,7 +9,7 @@ Avatar, This is AI, and the Akapulu Labs API origin are fixed for this
 example. Set DAILY_API_KEY, AKAPULU_API_KEY, DEEPGRAM_API_KEY, GOOGLE_API_KEY,
 and CARTESIA_API_KEY.
 
-Tested with Pipecat 1.12.0.
+Tested with Pipecat 1.14.0.
 """
 
 import asyncio
@@ -290,7 +290,7 @@ async def run_bot() -> None:
             voice="a167e0f3-df7e-4d52-a9c3-f949145efdab",
         ),
     )
-    avatar = AkapuluAvatar(sample_rate=SAMPLE_RATE, session_id=session_id)
+    avatar = AkapuluAvatar(session_id=session_id)
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,

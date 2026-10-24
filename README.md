@@ -4,7 +4,7 @@ Pipecat processor for an [Akapulu Labs](https://akapulu.com) talking avatar. Mai
 
 The `AkapuluAvatar` Pipecat plugin sits after your speech model. It sends assistant audio to the Akapulu Labs worker. The Akapulu Labs worker joins the Daily room already stored on the session and publishes the face and the played audio. It does not publish either.
 
-Tested with Pipecat 1.12.0.
+Tested with Pipecat 1.14.0. Requires Pipecat 1.12.0 or newer.
 
 ## Install
 
@@ -19,10 +19,10 @@ Create the Daily room yourself, then `POST /api/live-sessions/` from your server
 ```python
 from pipecat_akapulu import AkapuluAvatar
 
-avatar = AkapuluAvatar(sample_rate=24000, session_id=session_id)
+avatar = AkapuluAvatar(session_id=session_id)
 ```
 
-`sample_rate` is a positive multiple of 25 and must match the assistant audio frames.
+The sample rate is the pipeline audio-out rate (`PipelineParams.audio_out_sample_rate`). It must be a positive multiple of 25 and must match the assistant audio frames.
 
 Leave transport audio out and video out off. The Akapulu Labs worker is the Daily publisher for the face and the played audio.
 
@@ -45,7 +45,7 @@ The example uses Clara, leaves **This is AI** off, and calls the Akapulu Labs pr
 A GPT Live bot, a local server, and a browser page are in [akapulu-examples](https://github.com/Akapulu/akapulu-examples).
 
 ```bash
-uv add "pipecat-ai[daily,deepgram,cartesia,google,silero]==1.12.0" pipecat-akapulu
+uv add "pipecat-ai[daily,deepgram,cartesia,google,silero]==1.14.0" pipecat-akapulu
 ```
 
 Set `DAILY_API_KEY` and `AKAPULU_API_KEY`. Also set `DEEPGRAM_API_KEY`, `GOOGLE_API_KEY`, and `CARTESIA_API_KEY`. Then:
