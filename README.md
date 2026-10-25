@@ -38,17 +38,17 @@ Those are not Daily audio or video tracks. With RTVI on the call (for example `@
 
 ## Example
 
-`examples/foundational.py` creates a private Daily room, mints the browser, voice-bot, and Akapulu Labs worker tokens, then calls the Akapulu Labs API (`POST /api/live-sessions/` with your Bearer API key). It then runs speech-to-text, a model, speech output, and the `AkapuluAvatar` Pipecat plugin. It prints a join URL. Open that URL. The bot greets when you join, and it listens only to that browser microphone.
+`examples/foundational.py` creates a private Daily room, mints the browser, voice-bot, and Akapulu Labs worker tokens, then calls the Akapulu Labs API (`POST /api/live-sessions/` with your Bearer API key). Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Ariana voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. The bot greets when you join, and it listens only to that browser microphone. The first committed turn locks that language on Flux and on Sonic.
 
 The example uses Clara, leaves **This is AI** off, and calls the Akapulu Labs production API.
 
-A GPT Live bot, a local server, and a browser page are in [akapulu-examples](https://github.com/Akapulu/akapulu-examples).
+The same voice stack, a local server, and a browser page are in [akapulu-examples](https://github.com/Akapulu/akapulu-examples).
 
 ```bash
-uv add "pipecat-ai[daily,deepgram,cartesia,google,silero]==1.14.0" pipecat-akapulu
+uv add "pipecat-ai[daily,deepgram,openai,cartesia]==1.14.0" pipecat-akapulu
 ```
 
-Set `DAILY_API_KEY` and `AKAPULU_API_KEY`. Also set `DEEPGRAM_API_KEY`, `GOOGLE_API_KEY`, and `CARTESIA_API_KEY`. Then:
+Set `DAILY_API_KEY` and `AKAPULU_API_KEY`. Also set `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, and `CARTESIA_API_KEY`. Then:
 
 ```bash
 python examples/foundational.py

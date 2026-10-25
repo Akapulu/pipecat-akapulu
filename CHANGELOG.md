@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `examples/foundational.py` uses Deepgram Flux (`flux-general-multi`), OpenAI `gpt-5.4-mini`, and Cartesia Sonic 3.6. The first committed turn locks that language on Flux and on Sonic.
+
 ## [0.1.6] - 2026-10-24
 
 - Sample rate comes from `FrameProcessorSetup.audio_out_sample_rate` in `setup()`. `AkapuluAvatar` no longer takes `sample_rate`.
