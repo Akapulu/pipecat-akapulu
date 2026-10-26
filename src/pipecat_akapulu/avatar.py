@@ -438,12 +438,11 @@ class AkapuluAvatar(FrameProcessor):
             self._audio = audio
             format_message = json.dumps({"type": "format", "sample_rate": self._sample_rate})
             await self._audio.send(format_message)
-            self._record_debug(format_message)
+            self._record_debug(format_message, queued=False, time_it=False)
             pending = self._pending_audio
             self._pending_audio = []
             for message in pending:
                 await self._audio.send(message)
-                self._record_debug(message)
         self._audio_ready.set()
         if self._audio_reader is None:
             self._audio_reader = self.create_task(self._read_audio(), "akapulu-avatar-audio")
@@ -624,18 +623,23 @@ class AkapuluAvatar(FrameProcessor):
         self._debug_audio = audio
         self._debug_file = sends.open("x", encoding="utf-8")
 
-    def _record_debug(self, message: bytes | str) -> None:
+    def _record_debug(self, message: bytes | str, *, queued: bool, time_it: bool = True) -> None:
         if self._debug_file is None:
             return
         if self._debug_audio is None:
             raise RuntimeError("akapulu avatar debug audio directory is missing")
-        now = time.perf_counter()
-        row: dict = {"i": self._debug_i}
-        if self._debug_prev is None:
-            row["gap_ms"] = None
+        if not isinstance(queued, bool):
+            raise RuntimeError(f"akapulu avatar debug queued is {queued!r}")
+        row: dict = {"i": self._debug_i, "queued": queued}
+        if time_it:
+            now = time.perf_counter()
+            if self._debug_prev is None:
+                row["gap_ms"] = None
+            else:
+                row["gap_ms"] = (now - self._debug_prev) * 1000
+            self._debug_prev = now
         else:
-            row["gap_ms"] = (now - self._debug_prev) * 1000
-        self._debug_prev = now
+            row["gap_ms"] = None
         self._debug_i += 1
         if isinstance(message, str):
             try:
@@ -671,11 +675,12 @@ class AkapuluAvatar(FrameProcessor):
 
     async def _send_or_queue(self, message: bytes | str) -> None:
         async with self._audio_send_lock:
-            if self._audio is None:
+            queued = self._audio is None
+            self._record_debug(message, queued=queued)
+            if queued:
                 self._pending_audio.append(message)
                 return
             await self._audio.send(message)
-            self._record_debug(message)
 
     async def _ingest(self, frame: OutputAudioRawFrame) -> None:
         if not hasattr(self, "_sample_rate"):

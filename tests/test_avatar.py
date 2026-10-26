@@ -602,30 +602,34 @@ async def test_debug_records_each_wire_send() -> None:
         try:
             queued = json.dumps({"type": "speaking", "who": "user", "state": "started"})
             await tap._send_or_queue(queued)
-            if _debug_rows(trace):
-                raise RuntimeError("a queued send was written before the socket existed")
-            if tap._pending_audio != [queued]:
-                raise RuntimeError(f"pending audio was {tap._pending_audio!r}")
-            tap._audio = _Audio()
+            await asyncio.sleep(0.05)
             loud = _pcm(1000)
-            await tap._ingest(
-                OutputAudioRawFrame(audio=loud, sample_rate=24000, num_channels=1)
-            )
+            await tap._send_or_queue(b"A" + struct.pack(">I", 0) + loud)
+            queued_rows = _debug_rows(trace)
+            if [row["kind"] for row in queued_rows] != ["speaking", "audio"]:
+                raise RuntimeError(f"queued rows were {queued_rows}")
+            if queued_rows[0]["queued"] is not True or queued_rows[0]["gap_ms"] is not None:
+                raise RuntimeError(f"first queued row was {queued_rows[0]}")
+            if queued_rows[1]["queued"] is not True or queued_rows[1]["gap_ms"] < 40:
+                raise RuntimeError(f"queued audio gap was {queued_rows[1]['gap_ms']!r}")
+            if tap._pending_audio[0] != queued or tap._pending_audio[1][5:] != loud:
+                raise RuntimeError("queued sends were not kept")
+            tap._audio = _Audio()
             await tap._send_speaking("bot", "stopped")
             rows = _debug_rows(trace)
-            if [row["kind"] for row in rows] != ["audio", "speaking"]:
+            if [row["kind"] for row in rows] != ["speaking", "audio", "speaking"]:
                 raise RuntimeError(f"debug rows were {rows}")
-            if rows[0]["gap_ms"] is not None or rows[0]["seq"] != 0 or rows[0]["bytes"] != len(loud):
-                raise RuntimeError(f"audio row was {rows[0]}")
-            if not isinstance(rows[1]["gap_ms"], float) or rows[1]["gap_ms"] < 0:
-                raise RuntimeError(f"speaking gap was {rows[1]['gap_ms']!r}")
-            if rows[1]["body"] != {"type": "speaking", "who": "bot", "state": "stopped"}:
-                raise RuntimeError(f"speaking body was {rows[1]['body']}")
-            pcm_path = trace / rows[0]["pcm"]
+            if rows[1]["seq"] != 0 or rows[1]["bytes"] != len(loud):
+                raise RuntimeError(f"audio row was {rows[1]}")
+            if rows[2]["queued"] is not False:
+                raise RuntimeError(f"live speaking was marked queued: {rows[2]}")
+            if rows[2]["body"] != {"type": "speaking", "who": "bot", "state": "stopped"}:
+                raise RuntimeError(f"speaking body was {rows[2]['body']}")
+            pcm_path = trace / rows[1]["pcm"]
             if pcm_path.read_bytes() != loud:
-                raise RuntimeError("debug pcm did not match the sent frame")
-            if tap._audio.sent[0][5:] != loud:
-                raise RuntimeError("socket audio did not match the debug pcm")
+                raise RuntimeError("debug pcm did not match the handed frame")
+            if tap._audio.sent != [json.dumps({"type": "speaking", "who": "bot", "state": "stopped"})]:
+                raise RuntimeError(f"socket sent the queued frames twice: {tap._audio.sent!r}")
         finally:
             await tap._close()
 
@@ -656,7 +660,7 @@ async def test_debug_records_the_format_and_the_flush() -> None:
         tap._bind(24000)
         loud = _pcm(800)
         packet = b"A" + struct.pack(">I", 3) + loud
-        tap._pending_audio.append(packet)
+        await tap._send_or_queue(packet)
 
         def create_task(coro, name=None):
             coro.close()
@@ -668,12 +672,18 @@ async def test_debug_records_the_format_and_the_flush() -> None:
         try:
             await tap._take_streams({"audio": "wss://example.invalid/v1/audio"})
             rows = _debug_rows(trace)
-            if [row["kind"] for row in rows] != ["format", "audio"]:
+            if [row["kind"] for row in rows] != ["audio", "format"]:
                 raise RuntimeError(f"flush rows were {rows}")
-            if rows[0]["body"] != {"type": "format", "sample_rate": 24000}:
-                raise RuntimeError(f"format body was {rows[0]['body']}")
-            if rows[1]["seq"] != 3 or (trace / rows[1]["pcm"]).read_bytes() != loud:
-                raise RuntimeError(f"flushed audio row was {rows[1]}")
+            if rows[0]["queued"] is not True or rows[0]["seq"] != 3:
+                raise RuntimeError(f"queued audio row was {rows[0]}")
+            if (trace / rows[0]["pcm"]).read_bytes() != loud:
+                raise RuntimeError("flushed pcm did not match the handed frame")
+            if rows[1]["queued"] is not False or rows[1]["gap_ms"] is not None:
+                raise RuntimeError(f"format row was {rows[1]}")
+            if rows[1]["body"] != {"type": "format", "sample_rate": 24000}:
+                raise RuntimeError(f"format body was {rows[1]['body']}")
+            if len(rows) != 2:
+                raise RuntimeError("the socket flush wrote the queued frame a second time")
             if sock.sent != [
                 json.dumps({"type": "format", "sample_rate": 24000}),
                 packet,

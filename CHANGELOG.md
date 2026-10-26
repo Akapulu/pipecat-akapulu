@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-26
+
+- A debug trace stamps each audio-socket message when the bot hands it over. A message queued before the socket exists keeps that time. Opening the socket does not rewrite it.
+
 ## [0.1.7] - 2026-10-26
 
 - `tail_secs` defaults to 0. A TTS stop sends `bot stopped` immediately. Pass `tail_secs` to keep a wait.
