@@ -4,8 +4,10 @@ import asyncio
 import json
 import os
 import struct
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
@@ -519,7 +521,7 @@ def test_constructor_requires_session() -> None:
     else:
         raise RuntimeError("non-uuid session id was accepted")
     tap = AkapuluAvatar(**_kwargs())
-    if tap._tail_secs != 0.6:
+    if tap._tail_secs != 0:
         raise RuntimeError(f"default tail was {tap._tail_secs}")
     explicit = AkapuluAvatar(**_kwargs(tail_secs=1.5))
     if explicit._tail_secs != 1.5:
@@ -536,6 +538,150 @@ def test_constructor_requires_session() -> None:
         pass
     else:
         raise RuntimeError("constructor still took sample_rate")
+    if tap._debug_file is not None:
+        raise RuntimeError("debug file opened while debug was false")
+    try:
+        AkapuluAvatar(**_kwargs(debug_path="trace"))
+    except RuntimeError as exc:
+        if "debug is false" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("debug_path was accepted while debug was false")
+    try:
+        AkapuluAvatar(**_kwargs(debug=True))
+    except RuntimeError as exc:
+        if "debug_path is missing" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("debug true was accepted without debug_path")
+    try:
+        AkapuluAvatar(**_kwargs(debug="yes", debug_path="trace"))
+    except RuntimeError as exc:
+        if "debug is" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("non-bool debug was accepted")
+
+
+def _debug_rows(path: Path) -> list[dict]:
+    text = (path / "sends.jsonl").read_text()
+    if text == "":
+        return []
+    return [json.loads(line) for line in text.splitlines()]
+
+
+def test_debug_path_must_be_a_fresh_directory() -> None:
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        file_path = root / "not-a-dir"
+        file_path.write_text("x")
+        try:
+            AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(file_path))
+        except RuntimeError as exc:
+            if "not a directory" not in str(exc):
+                raise
+        else:
+            raise RuntimeError("a file debug_path was accepted")
+        trace = root / "trace"
+        first = AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(trace))
+        first._close_debug()
+        try:
+            AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(trace))
+        except RuntimeError as exc:
+            if "sends.jsonl" not in str(exc):
+                raise
+        else:
+            raise RuntimeError("an existing debug directory was accepted")
+
+
+async def test_debug_records_each_wire_send() -> None:
+    with tempfile.TemporaryDirectory() as raw:
+        trace = Path(raw) / "trace"
+        tap = AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(trace))
+        tap._bind(24000)
+        try:
+            queued = json.dumps({"type": "speaking", "who": "user", "state": "started"})
+            await tap._send_or_queue(queued)
+            if _debug_rows(trace):
+                raise RuntimeError("a queued send was written before the socket existed")
+            if tap._pending_audio != [queued]:
+                raise RuntimeError(f"pending audio was {tap._pending_audio!r}")
+            tap._audio = _Audio()
+            loud = _pcm(1000)
+            await tap._ingest(
+                OutputAudioRawFrame(audio=loud, sample_rate=24000, num_channels=1)
+            )
+            await tap._send_speaking("bot", "stopped")
+            rows = _debug_rows(trace)
+            if [row["kind"] for row in rows] != ["audio", "speaking"]:
+                raise RuntimeError(f"debug rows were {rows}")
+            if rows[0]["gap_ms"] is not None or rows[0]["seq"] != 0 or rows[0]["bytes"] != len(loud):
+                raise RuntimeError(f"audio row was {rows[0]}")
+            if not isinstance(rows[1]["gap_ms"], float) or rows[1]["gap_ms"] < 0:
+                raise RuntimeError(f"speaking gap was {rows[1]['gap_ms']!r}")
+            if rows[1]["body"] != {"type": "speaking", "who": "bot", "state": "stopped"}:
+                raise RuntimeError(f"speaking body was {rows[1]['body']}")
+            pcm_path = trace / rows[0]["pcm"]
+            if pcm_path.read_bytes() != loud:
+                raise RuntimeError("debug pcm did not match the sent frame")
+            if tap._audio.sent[0][5:] != loud:
+                raise RuntimeError("socket audio did not match the debug pcm")
+        finally:
+            await tap._close()
+
+
+async def test_debug_records_the_format_and_the_flush() -> None:
+    import pipecat_akapulu.avatar as avatar_mod
+
+    class _Sock:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, message):
+            self.sent.append(message)
+
+        async def close(self):
+            return None
+
+    sock = _Sock()
+
+    async def fake_connect(url, **kwargs):
+        if not url.startswith("wss://"):
+            raise RuntimeError(f"connect url was {url}")
+        return sock
+
+    with tempfile.TemporaryDirectory() as raw:
+        trace = Path(raw) / "trace"
+        tap = AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(trace))
+        tap._bind(24000)
+        loud = _pcm(800)
+        packet = b"A" + struct.pack(">I", 3) + loud
+        tap._pending_audio.append(packet)
+
+        def create_task(coro, name=None):
+            coro.close()
+            return None
+
+        tap.create_task = create_task
+        original = avatar_mod.connect
+        avatar_mod.connect = fake_connect
+        try:
+            await tap._take_streams({"audio": "wss://example.invalid/v1/audio"})
+            rows = _debug_rows(trace)
+            if [row["kind"] for row in rows] != ["format", "audio"]:
+                raise RuntimeError(f"flush rows were {rows}")
+            if rows[0]["body"] != {"type": "format", "sample_rate": 24000}:
+                raise RuntimeError(f"format body was {rows[0]['body']}")
+            if rows[1]["seq"] != 3 or (trace / rows[1]["pcm"]).read_bytes() != loud:
+                raise RuntimeError(f"flushed audio row was {rows[1]}")
+            if sock.sent != [
+                json.dumps({"type": "format", "sample_rate": 24000}),
+                packet,
+            ]:
+                raise RuntimeError(f"socket flush was {sock.sent!r}")
+        finally:
+            avatar_mod.connect = original
+            await tap._close()
 
 
 def test_bind_requires_multiple_of_25() -> None:
@@ -796,6 +942,9 @@ def test_engine_joined_post() -> None:
 
 async def main() -> None:
     test_constructor_requires_session()
+    test_debug_path_must_be_a_fresh_directory()
+    await test_debug_records_each_wire_send()
+    await test_debug_records_the_format_and_the_flush()
     test_bind_requires_multiple_of_25()
     await test_setup_binds_pipeline_rate()
     await test_cleanup_closes()

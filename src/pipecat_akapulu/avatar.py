@@ -8,7 +8,7 @@ Open it with session_id. The sample rate is the pipeline audio-out rate,
 read in setup from FrameProcessorSetup.audio_out_sample_rate. It must be a
 positive multiple of 25 and match the assistant audio frames. Idle becomes
 speech on the first output chunk louder than the speaking threshold.
-tail_secs defaults to 0.6.
+tail_secs defaults to 0.
 TTS stop starts that wait, and another loud chunk starts it over. The gate
 locks when the wait finishes.
 
@@ -43,6 +43,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 
 from loguru import logger
 from websockets.asyncio.client import connect
@@ -97,7 +98,7 @@ class AkapuluAvatar(FrameProcessor):
 
     Pass session_id. The room and the avatar token are already on that
     session. The sample rate is the pipeline audio-out rate, bound in
-    setup. tail_secs defaults to 0.6. TTS stop starts that wait, and
+    setup. tail_secs defaults to 0. TTS stop starts that wait, and
     another loud chunk starts it over.
     """
 
@@ -105,7 +106,9 @@ class AkapuluAvatar(FrameProcessor):
         self,
         *,
         session_id: str,
-        tail_secs: float = 0.6,
+        tail_secs: float = 0,
+        debug: bool = False,
+        debug_path: str | None = None,
     ):
         super().__init__()
         if not isinstance(session_id, str) or not session_id:
@@ -117,6 +120,11 @@ class AkapuluAvatar(FrameProcessor):
         if tail_secs < 0:
             raise RuntimeError(f"akapulu avatar tail wait {tail_secs} is negative")
         self._tail_secs = tail_secs
+        self._debug_file = None
+        self._debug_audio: Path | None = None
+        self._debug_prev: float | None = None
+        self._debug_i = 0
+        self._open_debug(debug, debug_path)
         self._url = ""
         self._session = None
         self._audio = None
@@ -428,11 +436,14 @@ class AkapuluAvatar(FrameProcessor):
         audio = await connect(audio_url, open_timeout=60, max_size=None, compression=None)
         async with self._audio_send_lock:
             self._audio = audio
-            await self._audio.send(json.dumps({"type": "format", "sample_rate": self._sample_rate}))
+            format_message = json.dumps({"type": "format", "sample_rate": self._sample_rate})
+            await self._audio.send(format_message)
+            self._record_debug(format_message)
             pending = self._pending_audio
             self._pending_audio = []
             for message in pending:
                 await self._audio.send(message)
+                self._record_debug(message)
         self._audio_ready.set()
         if self._audio_reader is None:
             self._audio_reader = self.create_task(self._read_audio(), "akapulu-avatar-audio")
@@ -590,12 +601,81 @@ class AkapuluAvatar(FrameProcessor):
             since_tts_ms,
         )
 
+    def _open_debug(self, debug: bool, debug_path: str | None) -> None:
+        if not isinstance(debug, bool):
+            raise RuntimeError(f"akapulu avatar debug is {debug!r}")
+        if not debug:
+            if debug_path is not None:
+                raise RuntimeError("akapulu avatar debug_path is set while debug is false")
+            return
+        if not isinstance(debug_path, str) or debug_path == "":
+            raise RuntimeError("akapulu avatar debug_path is missing")
+        directory = Path(debug_path)
+        if directory.exists() and not directory.is_dir():
+            raise RuntimeError(f"akapulu avatar debug_path is not a directory: {debug_path}")
+        directory.mkdir(parents=True, exist_ok=True)
+        sends = directory / "sends.jsonl"
+        audio = directory / "audio"
+        if sends.exists():
+            raise RuntimeError(f"akapulu avatar debug_path already has sends.jsonl: {debug_path}")
+        if audio.exists():
+            raise RuntimeError(f"akapulu avatar debug_path already has audio: {debug_path}")
+        audio.mkdir()
+        self._debug_audio = audio
+        self._debug_file = sends.open("x", encoding="utf-8")
+
+    def _record_debug(self, message: bytes | str) -> None:
+        if self._debug_file is None:
+            return
+        if self._debug_audio is None:
+            raise RuntimeError("akapulu avatar debug audio directory is missing")
+        now = time.perf_counter()
+        row: dict = {"i": self._debug_i}
+        if self._debug_prev is None:
+            row["gap_ms"] = None
+        else:
+            row["gap_ms"] = (now - self._debug_prev) * 1000
+        self._debug_prev = now
+        self._debug_i += 1
+        if isinstance(message, str):
+            try:
+                body = json.loads(message)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("akapulu avatar debug send is not JSON") from exc
+            if not isinstance(body, dict) or not isinstance(body.get("type"), str):
+                raise RuntimeError("akapulu avatar debug send is not a typed object")
+            row["kind"] = body["type"]
+            row["body"] = body
+        elif isinstance(message, bytes):
+            if len(message) < 5 or message[:1] != b"A":
+                raise RuntimeError("akapulu avatar debug audio send is not an A frame")
+            seq = struct.unpack(">I", message[1:5])[0]
+            pcm = message[5:]
+            name = f"{seq:08d}.s16"
+            (self._debug_audio / name).write_bytes(pcm)
+            row["kind"] = "audio"
+            row["seq"] = seq
+            row["bytes"] = len(pcm)
+            row["pcm"] = f"audio/{name}"
+        else:
+            raise RuntimeError(f"akapulu avatar debug send is {type(message).__name__}")
+        self._debug_file.write(json.dumps(row, separators=(",", ":")) + "\n")
+        self._debug_file.flush()
+
+    def _close_debug(self) -> None:
+        debug_file = self._debug_file
+        if debug_file is None:
+            return
+        self._debug_file = None
+        debug_file.close()
+
     async def _send_or_queue(self, message: bytes | str) -> None:
         async with self._audio_send_lock:
             if self._audio is None:
                 self._pending_audio.append(message)
                 return
             await self._audio.send(message)
+            self._record_debug(message)
 
     async def _ingest(self, frame: OutputAudioRawFrame) -> None:
         if not hasattr(self, "_sample_rate"):
@@ -651,6 +731,7 @@ class AkapuluAvatar(FrameProcessor):
         if self._closed:
             return
         self._closed = True
+        self._close_debug()
         if self._open_task is not None and not self._open_task.done():
             await self.cancel_task(self._open_task)
         if self._updates_task is not None and not self._updates_task.done():
