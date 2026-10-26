@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-26
+
+- `tail_secs` defaults to 0. A TTS stop sends `bot stopped` immediately. Pass `tail_secs` to keep a wait.
 - `examples/foundational.py` uses Deepgram Flux (`flux-general-multi`), OpenAI `gpt-5.4-mini`, and Cartesia Sonic 3.6. The first committed turn locks that language on Flux and on Sonic.
 
 ## [0.1.6] - 2026-10-24
