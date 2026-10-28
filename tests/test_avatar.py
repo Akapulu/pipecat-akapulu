@@ -29,7 +29,6 @@ def _tap(connect_url: str | None = None) -> AkapuluAvatar:
     tap = AkapuluAvatar(
         session_id=SESSION,
     )
-    tap._bind(24000)
     if connect_url is not None:
         async def _ready():
             return connect_url
@@ -391,7 +390,7 @@ async def test_cleanup_closes() -> None:
             raise RuntimeError("second cleanup skipped super")
 
 
-async def test_setup_binds_pipeline_rate() -> None:
+async def test_setup_keeps_the_wire_rate() -> None:
     from unittest.mock import AsyncMock, patch
 
     tap = AkapuluAvatar(session_id=SESSION)
@@ -404,21 +403,11 @@ async def test_setup_binds_pipeline_rate() -> None:
 
     tap.create_task = create_task
     with patch.object(FrameProcessor, "setup", new=AsyncMock()):
-        await tap.setup(type("Setup", (), {"audio_out_sample_rate": 16000})())
-    if tap._sample_rate != 16000:
-        raise RuntimeError(f"setup bound {tap._sample_rate}")
+        await tap.setup(type("Setup", (), {"audio_out_sample_rate": 24001})())
+    if tap._sample_rate != 24000:
+        raise RuntimeError(f"setup wire rate was {tap._sample_rate}")
     if created.get("name") != "akapulu-avatar-open":
         raise RuntimeError(f"setup open task was {created}")
-
-    bad = AkapuluAvatar(session_id=SESSION)
-    with patch.object(FrameProcessor, "setup", new=AsyncMock()):
-        try:
-            await bad.setup(type("Setup", (), {"audio_out_sample_rate": 24001})())
-        except RuntimeError as exc:
-            if "multiple of 25" not in str(exc):
-                raise
-        else:
-            raise RuntimeError("setup accepted a non-multiple sample rate")
 
 
 async def test_clean_audio_close_is_not_a_reader_error() -> None:
@@ -598,7 +587,6 @@ async def test_debug_records_each_wire_send() -> None:
     with tempfile.TemporaryDirectory() as raw:
         trace = Path(raw) / "trace"
         tap = AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(trace))
-        tap._bind(24000)
         try:
             queued = json.dumps({"type": "speaking", "who": "user", "state": "started"})
             await tap._send_or_queue(queued)
@@ -657,7 +645,6 @@ async def test_debug_records_the_format_and_the_flush() -> None:
     with tempfile.TemporaryDirectory() as raw:
         trace = Path(raw) / "trace"
         tap = AkapuluAvatar(session_id=SESSION, debug=True, debug_path=str(trace))
-        tap._bind(24000)
         loud = _pcm(800)
         packet = b"A" + struct.pack(">I", 3) + loud
         await tap._send_or_queue(packet)
@@ -694,22 +681,57 @@ async def test_debug_records_the_format_and_the_flush() -> None:
             await tap._close()
 
 
-def test_bind_requires_multiple_of_25() -> None:
-    tap = AkapuluAvatar(session_id=SESSION)
-    tap._bind(24000)
+async def test_ingest_resamples_to_24000() -> None:
+    tap = _tap("wss://example.invalid/live")
+    audio = _Audio()
+    tap._audio = audio
+    count = 44100
+    pcm = struct.pack("<h", 1000) * count
+    await tap._ingest(OutputAudioRawFrame(audio=pcm, sample_rate=44100, num_channels=1))
+    await tap._flush_wire_tail()
+    body = b"".join(packet[5:] for packet in audio.sent)
+    samples = len(body) // 2
+    if samples < 23900 or samples > 24100:
+        raise RuntimeError(f"44100 resample produced {samples} samples")
     if tap._sample_rate != 24000:
-        raise RuntimeError(f"bound rate was {tap._sample_rate}")
+        raise RuntimeError(f"wire rate was {tap._sample_rate}")
+
+
+async def test_ingest_rejects_a_rate_change() -> None:
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _Audio()
+    await tap._ingest(OutputAudioRawFrame(audio=b"\x00\x00" * 480, sample_rate=16000, num_channels=1))
     try:
-        tap._bind(24001)
+        await tap._ingest(OutputAudioRawFrame(audio=b"\x00\x00" * 960, sample_rate=24000, num_channels=1))
     except RuntimeError as exc:
-        if "multiple of 25" not in str(exc):
+        if "changed from 16000 to 24000" not in str(exc):
             raise
     else:
-        raise RuntimeError("non-multiple sample rate was accepted")
+        raise RuntimeError("a sample rate change was accepted")
+
+
+async def test_ingest_rejects_stereo_and_odd_pcm() -> None:
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _Audio()
     try:
-        tap._bind(0)
-    except RuntimeError:
-        pass
+        await tap._ingest(OutputAudioRawFrame(audio=b"\x00\x00\x00\x00", sample_rate=24000, num_channels=2))
+    except RuntimeError as exc:
+        if "mono" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("stereo audio was accepted")
+    try:
+        await tap._ingest(OutputAudioRawFrame(audio=b"\x00", sample_rate=24000, num_channels=1))
+    except RuntimeError as exc:
+        if "not s16" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("odd pcm was accepted")
+    try:
+        await tap._ingest(OutputAudioRawFrame(audio=b"\x00\x00", sample_rate=0, num_channels=1))
+    except RuntimeError as exc:
+        if "invalid" not in str(exc):
+            raise
     else:
         raise RuntimeError("zero sample rate was accepted")
 
@@ -955,8 +977,10 @@ async def main() -> None:
     test_debug_path_must_be_a_fresh_directory()
     await test_debug_records_each_wire_send()
     await test_debug_records_the_format_and_the_flush()
-    test_bind_requires_multiple_of_25()
-    await test_setup_binds_pipeline_rate()
+    await test_setup_keeps_the_wire_rate()
+    await test_ingest_resamples_to_24000()
+    await test_ingest_rejects_a_rate_change()
+    await test_ingest_rejects_stereo_and_odd_pcm()
     await test_cleanup_closes()
     test_django_origin()
     test_engine_joined_post()

@@ -22,7 +22,7 @@ from pipecat_akapulu import AkapuluAvatar
 avatar = AkapuluAvatar(session_id=session_id)
 ```
 
-The sample rate is the pipeline audio-out rate (`PipelineParams.audio_out_sample_rate`). It must be a positive multiple of 25 and must match the assistant audio frames.
+Assistant audio is resampled to 24000 Hz mono before it is sent. A frame that is already 24000 Hz mono is sent unchanged. The worker always receives 24000.
 
 Leave transport audio out and video out off. The Akapulu Labs worker is the Daily publisher for the face and the played audio.
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-27
+
+- Assistant audio is resampled to 24000 Hz before it is sent. A frame that is already 24000 Hz mono is sent unchanged. The pipeline rate no longer has to match the frames.
+
 ## [0.1.8] - 2026-10-26
 
 - A debug trace stamps each audio-socket message when the bot hands it over. A message queued before the socket exists keeps that time. Opening the socket does not rewrite it.
