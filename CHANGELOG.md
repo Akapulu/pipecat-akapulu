@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-27
+
+- `create_akapulu_call` runs on your server. It creates a private Daily room, mints the browser, voice-bot, and worker tokens, and posts the live session. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is not returned.
+
 ## [0.1.9] - 2026-10-27
 
 - Assistant audio is resampled to 24000 Hz before it is sent. A frame that is already 24000 Hz mono is sent unchanged. The pipeline rate no longer has to match the frames.
