@@ -14,7 +14,7 @@ uv add pipecat-akapulu
 
 ## Use
 
-`create_akapulu_call` runs on your server before the bot starts. It reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. A missing or blank value raises. It creates a private Daily room for three participants, mints the browser, voice-bot, and worker tokens, and `POST /api/live-sessions/`. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is sent to Akapulu Labs and is not returned. The browser joins as `You`. The worker joins as `Avatar`. The Daily room lasts two hours unless you pass `room_exp_secs`. Daily removes everyone when it expires.
+`create_akapulu_call` runs on your server before the bot starts. It reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. A missing or blank value raises. It creates a private Daily room for three participants, mints the browser, voice-bot, and worker tokens, and `POST /api/live-sessions/`. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is sent to Akapulu Labs and is not returned. The browser joins as `You`. The worker joins as `Avatar`. The voice-bot token is not a meeting owner, and its permissions set `hasPresence` to false. Daily ignores that permissions object on an owner token. Daily Prebuilt then shows the browser and the avatar. The Daily room lasts two hours unless you pass `room_exp_secs`. Daily removes everyone when it expires.
 
 ```python
 from pipecat_akapulu import AkapuluAvatar, create_akapulu_call
@@ -47,7 +47,7 @@ Those are not Daily audio or video tracks. With RTVI on the call (for example `@
 
 ## Example
 
-`examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Ariana voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. The bot greets when you join, and it listens only to that browser microphone. The first committed turn locks that language on Flux and on Sonic.
+`examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Ariana voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. Daily Prebuilt shows you and the avatar. The bot greets when you join, and it listens only to that browser microphone. The first committed turn locks that language on Flux and on Sonic.
 
 The example uses Clara, leaves **This is AI** off, and calls the Akapulu Labs production API.
 

@@ -3,8 +3,9 @@
 This file calls create_akapulu_call, which creates a private Daily room,
 mints the browser, voice-bot, and Akapulu Labs worker tokens, and POSTs
 /api/live-sessions/ on the Akapulu Labs API. It prints a join URL. Open
-that URL. Audio out and video out stay off. The Akapulu Labs worker
-publishes the face and the played audio.
+that URL. Audio out and video out stay off. The voice-bot token has
+no Daily presence, so the page shows you and the avatar. The Akapulu
+Labs worker publishes the face and the played audio.
 
 Avatar and This is AI are fixed for this example. The API origin is the
 plugin origin. Deepgram Flux hears the caller. gpt-5.4-mini speaks. Cartesia

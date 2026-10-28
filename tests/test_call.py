@@ -41,7 +41,8 @@ async def _tokens(request: web.Request) -> web.Response:
     body = await request.json()
     request.app["state"]["tokens"].append(body)
     props = body["properties"]
-    if props.get("is_owner") is True:
+    permissions = props.get("permissions") or {}
+    if permissions.get("hasPresence") is False:
         token = "bot-token"
     elif props.get("user_name") == BROWSER_NAME:
         token = "browser-token"
@@ -163,8 +164,13 @@ async def test_creates_the_room_and_posts_the_session() -> None:
     for body in state["tokens"]:
         token_props = body["properties"]
         by_name[token_props.get("user_name")] = token_props
-    if by_name[None]["is_owner"] is not True:
-        raise RuntimeError("bot token was not an owner")
+    bot = by_name[None]
+    if bot["is_owner"] is not False:
+        raise RuntimeError("bot token was a meeting owner")
+    if bot["enable_screenshare"] is not False:
+        raise RuntimeError("bot token could share a screen")
+    if bot["permissions"] != {"hasPresence": False}:
+        raise RuntimeError("bot token was visible in Daily Prebuilt")
     if by_name[BROWSER_NAME]["is_owner"] is not False or by_name[BROWSER_NAME]["user_name"] != "You":
         raise RuntimeError("browser token was not named You")
     avatar = by_name[AVATAR_NAME]

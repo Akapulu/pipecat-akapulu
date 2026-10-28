@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pipecat-akapulu"
-version = "0.1.11"
+version = "0.1.12"
 description = "Pipecat processor that sends assistant audio to an Akapulu Labs avatar."
 readme = "README.md"
 license = "BSD-2-Clause"

@@ -6,8 +6,11 @@ POST /api/live-sessions/. It returns the room URL, the bot token, the
 browser token, and session_id. The worker token is not returned.
 
 The browser token is named You. The worker token is named Avatar.
-A bot that already has a Daily room mints the worker token and posts
-/api/live-sessions/ itself.
+The voice-bot token is not a meeting owner. Daily applies the
+permissions object only to non-owners, and this token sets
+hasPresence false so Daily Prebuilt does not draw a tile for the
+voice bot. A bot that already has a Daily room mints the worker
+token and posts /api/live-sessions/ itself.
 """
 
 import json
@@ -94,8 +97,10 @@ async def create_akapulu_call(
     Reads DAILY_API_KEY and AKAPULU_API_KEY from the environment. Creates a
     private Daily room for three participants. The room lasts room_exp_secs,
     which defaults to two hours. Mints the browser, voice-bot, and worker
-    tokens for that same lifetime, and posts the live session. The worker
-    token is sent to Akapulu Labs and is not returned.
+    tokens for that same lifetime, and posts the live session. The voice-bot
+    token is not a meeting owner and has no Daily presence, so Prebuilt
+    shows the browser and the avatar. The worker token is sent to Akapulu
+    Labs and is not returned.
     """
     daily_key = _env_secret("DAILY_API_KEY")
     akapulu_key = _env_secret("AKAPULU_API_KEY")
@@ -135,8 +140,12 @@ async def create_akapulu_call(
     bot_token = await _token(
         rest,
         room_url,
-        owner=True,
-        properties=DailyMeetingTokenProperties(is_owner=True),
+        owner=False,
+        properties=DailyMeetingTokenProperties(
+            is_owner=False,
+            enable_screenshare=False,
+            permissions={"hasPresence": False},
+        ),
         room_exp_secs=exp_secs,
     )
     browser_token = await _token(

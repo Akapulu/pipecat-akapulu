@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-28
+
+- The voice-bot meeting token is not an owner, and `permissions.hasPresence` is false. Daily Prebuilt shows the browser and the avatar. Daily ignores that permissions object on an owner token.
+
 ## [0.1.11] - 2026-10-28
 
 - A status GET that hits the 15s read timeout is polled again until the 180s worker-url deadline. The open still needs one response that includes `worker_wss_url`. Any other lookup error still raises immediately.
