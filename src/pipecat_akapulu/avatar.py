@@ -370,9 +370,22 @@ class AkapuluAvatar(FrameProcessor):
         await self._emit_status(body)
 
     async def _wait_worker_wss(self) -> str:
+        """Poll until the worker posts its socket.
+
+        A status read that hits the 15s socket timeout is another miss.
+        The loop still stops at ``_SESSION_TIMEOUT_SECS`` and raises.
+        Any other lookup error raises immediately.
+        """
         deadline = time.perf_counter() + _SESSION_TIMEOUT_SECS
         while True:
-            payload = await asyncio.to_thread(self._fetch_worker_poll)
+            try:
+                payload = await asyncio.to_thread(self._fetch_worker_poll)
+            except TimeoutError as exc:
+                if time.perf_counter() >= deadline:
+                    raise RuntimeError("akapulu avatar worker url was not posted") from exc
+                logger.warning("akapulu avatar worker url poll timed out: {}", exc)
+                await asyncio.sleep(0.5)
+                continue
             await self._emit_poll_status(payload)
             worker_wss_url = self._worker_wss_from_poll(payload)
             if worker_wss_url:

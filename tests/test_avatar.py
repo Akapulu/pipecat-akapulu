@@ -19,6 +19,7 @@ from loguru import logger
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from websockets.asyncio.server import serve
 
+import pipecat_akapulu.avatar as avatar_mod
 from pipecat_akapulu.avatar import AkapuluAvatar, _PROD_DJANGO_ORIGIN, _django_origin
 
 
@@ -926,6 +927,71 @@ async def test_poll_continues_after_the_url() -> None:
         raise RuntimeError(f"poll stopped early: {script}")
 
 
+async def test_status_read_timeout_is_retried() -> None:
+    tap = _tap()
+    calls = {"n": 0}
+
+    def fetch():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("The read operation timed out")
+        if calls["n"] == 2:
+            raise RuntimeError("worker url lookup returned 500 nope")
+        return _poll(worker_wss_url="wss://example.invalid/live", completion_percent=50)
+
+    tap._fetch_worker_poll = fetch
+    try:
+        await tap._wait_worker_wss()
+    except RuntimeError as exc:
+        if str(exc) != "worker url lookup returned 500 nope":
+            raise
+    else:
+        raise RuntimeError("a status lookup error was retried")
+    if calls["n"] != 2:
+        raise RuntimeError(f"lookup error stopped after {calls['n']} polls")
+
+    calls["n"] = 0
+
+    def fetch_timeout_then_url():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("The read operation timed out")
+        return _poll(worker_wss_url="wss://example.invalid/live", completion_percent=50)
+
+    tap = _tap()
+    tap._fetch_worker_poll = fetch_timeout_then_url
+    url = await tap._wait_worker_wss()
+    if url != "wss://example.invalid/live":
+        raise RuntimeError(f"worker url was {url}")
+    if calls["n"] != 2:
+        raise RuntimeError(f"timed out poll was not retried: {calls['n']}")
+    if not tap._queued_status:
+        raise RuntimeError("the successful poll did not emit status")
+
+
+async def test_status_read_timeout_at_the_deadline_raises() -> None:
+    saved = avatar_mod._SESSION_TIMEOUT_SECS
+    avatar_mod._SESSION_TIMEOUT_SECS = 0
+    try:
+        tap = _tap()
+
+        def fetch():
+            raise TimeoutError("The read operation timed out")
+
+        tap._fetch_worker_poll = fetch
+        try:
+            await tap._wait_worker_wss()
+        except RuntimeError as exc:
+            if str(exc) != "akapulu avatar worker url was not posted":
+                raise
+            if not isinstance(exc.__cause__, TimeoutError):
+                raise RuntimeError("deadline timeout dropped the read error")
+        else:
+            raise RuntimeError("a timed out poll past the deadline returned a url")
+    finally:
+        avatar_mod._SESSION_TIMEOUT_SECS = saved
+
+
 def test_engine_joined_post() -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -987,6 +1053,8 @@ async def main() -> None:
     test_poll_does_not_rewind_socket_status()
     await test_poll_status_before_the_url()
     await test_poll_continues_after_the_url()
+    await test_status_read_timeout_is_retried()
+    await test_status_read_timeout_at_the_deadline_raises()
     await test_video_url_is_rejected()
     await test_daily_message()
     await test_idle_opens_on_loud_audio_not_tts_started()

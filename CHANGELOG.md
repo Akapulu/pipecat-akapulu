@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-28
+
+- A status GET that hits the 15s read timeout is polled again until the 180s worker-url deadline. The open still needs one response that includes `worker_wss_url`. Any other lookup error still raises immediately.
+
 ## [0.1.10] - 2026-10-27
 
 - `create_akapulu_call` reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. It creates a private Daily room, mints the browser, voice-bot, and worker tokens, and posts the live session. `room_exp_secs` defaults to two hours. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is not returned.
