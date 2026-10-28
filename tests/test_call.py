@@ -79,24 +79,44 @@ async def _serve(state: dict) -> tuple[web.AppRunner, str]:
     return runner, f"http://127.0.0.1:{port}"
 
 
-def _restore(previous: str | None) -> None:
-    if previous is None:
-        os.environ.pop("AKAPULU_API_URL", None)
-    else:
-        os.environ["AKAPULU_API_URL"] = previous
+_ENV_NAMES = ("DAILY_API_KEY", "AKAPULU_API_KEY", "DAILY_API_URL", "AKAPULU_API_URL")
+
+
+def _saved_env() -> dict:
+    return {name: os.environ.get(name) for name in _ENV_NAMES}
+
+
+def _restore_env(saved: dict) -> None:
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+def _set_env(values: dict) -> None:
+    for name, value in values.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 async def _call(state: dict, **overrides):
     runner, origin = await _serve(state)
-    previous = os.environ.get("AKAPULU_API_URL")
-    os.environ["AKAPULU_API_URL"] = origin
+    saved = _saved_env()
+    _set_env(
+        {
+            "DAILY_API_KEY": "daily-key",
+            "AKAPULU_API_KEY": "akapulu-key",
+            "DAILY_API_URL": origin,
+            "AKAPULU_API_URL": origin,
+        }
+    )
     kwargs = {
-        "daily_api_key": "daily-key",
-        "akapulu_api_key": "akapulu-key",
         "avatar_id": AVATAR_ID,
         "show_ai_label": True,
         "room_exp_secs": 7200,
-        "daily_api_url": origin,
     }
     kwargs.update(overrides)
     try:
@@ -104,7 +124,7 @@ async def _call(state: dict, **overrides):
             kwargs["session"] = session
             return await create_akapulu_call(**kwargs)
     finally:
-        _restore(previous)
+        _restore_env(saved)
         await runner.cleanup()
 
 
@@ -194,37 +214,73 @@ async def test_rejects_a_bad_session_id() -> None:
 
 
 async def test_rejects_bad_arguments() -> None:
-    async with aiohttp.ClientSession() as session:
-        base = {
-            "daily_api_key": "daily-key",
-            "akapulu_api_key": "akapulu-key",
-            "avatar_id": AVATAR_ID,
-            "show_ai_label": False,
-            "session": session,
-            "room_exp_secs": 60,
+    saved = _saved_env()
+    _set_env(
+        {
+            "DAILY_API_KEY": "daily-key",
+            "AKAPULU_API_KEY": "akapulu-key",
+            "DAILY_API_URL": None,
         }
-        cases = [
-            {"daily_api_key": "  ", "needle": "daily api key"},
-            {"akapulu_api_key": "", "needle": "akapulu api key"},
-            {"avatar_id": "clara", "needle": "avatar_id"},
-            {"show_ai_label": "yes", "needle": "show_ai_label"},
-            {"session": None, "needle": "session"},
-            {"room_exp_secs": 0, "needle": "room_exp_secs"},
-            {"room_exp_secs": True, "needle": "room_exp_secs"},
-            {"daily_api_url": "ftp://daily.example", "needle": "daily api url"},
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            base = {
+                "avatar_id": AVATAR_ID,
+                "show_ai_label": False,
+                "session": session,
+                "room_exp_secs": 60,
+            }
+            cases = [
+                {"avatar_id": "clara", "needle": "avatar_id"},
+                {"show_ai_label": "yes", "needle": "show_ai_label"},
+                {"session": None, "needle": "session"},
+                {"room_exp_secs": 0, "needle": "room_exp_secs"},
+                {"room_exp_secs": True, "needle": "room_exp_secs"},
+            ]
+            for update in cases:
+                kwargs = dict(base)
+                needle = update["needle"]
+                kwargs.update(update)
+                kwargs.pop("needle")
+                try:
+                    await create_akapulu_call(**kwargs)
+                except RuntimeError as exc:
+                    if needle not in str(exc):
+                        raise RuntimeError(f"{update} raised {exc}") from exc
+                else:
+                    raise RuntimeError(f"{update} was accepted")
+        env_cases = [
+            ("DAILY_API_KEY", None),
+            ("DAILY_API_KEY", "   "),
+            ("AKAPULU_API_KEY", None),
+            ("AKAPULU_API_KEY", ""),
+            ("DAILY_API_URL", "ftp://daily.example"),
+            ("DAILY_API_URL", "   "),
         ]
-        for update in cases:
-            kwargs = dict(base)
-            needle = update["needle"]
-            kwargs.update(update)
-            kwargs.pop("needle")
-            try:
-                await create_akapulu_call(**kwargs)
-            except RuntimeError as exc:
-                if needle not in str(exc):
-                    raise RuntimeError(f"{update} raised {exc}") from exc
-            else:
-                raise RuntimeError(f"{update} was accepted")
+        async with aiohttp.ClientSession() as session:
+            for name, value in env_cases:
+                _set_env(
+                    {
+                        "DAILY_API_KEY": "daily-key",
+                        "AKAPULU_API_KEY": "akapulu-key",
+                        "DAILY_API_URL": None,
+                        name: value,
+                    }
+                )
+                try:
+                    await create_akapulu_call(
+                        avatar_id=AVATAR_ID,
+                        show_ai_label=False,
+                        session=session,
+                        room_exp_secs=60,
+                    )
+                except RuntimeError as exc:
+                    if name not in str(exc):
+                        raise RuntimeError(f"{name}={value!r} raised {exc}") from exc
+                else:
+                    raise RuntimeError(f"{name}={value!r} was accepted")
+    finally:
+        _restore_env(saved)
 
 
 def main() -> None:

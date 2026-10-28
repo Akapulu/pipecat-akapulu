@@ -1,8 +1,9 @@
 """Create a Daily room and an Akapulu live session from the caller's server.
 
-The Daily API key stays on that server. This posts room_url and the worker
-token to POST /api/live-sessions/. It returns the room URL, the bot token,
-the browser token, and session_id. The worker token is not returned.
+DAILY_API_KEY and AKAPULU_API_KEY come from the environment. A missing or
+blank value raises. This posts room_url and the worker token to
+POST /api/live-sessions/. It returns the room URL, the bot token, the
+browser token, and session_id. The worker token is not returned.
 
 The browser token is named You. The worker token is named Avatar.
 A bot that already has a Daily room mints the worker token and posts
@@ -10,6 +11,7 @@ A bot that already has a Daily room mints the worker token and posts
 """
 
 import json
+import os
 import time
 import uuid
 
@@ -35,14 +37,22 @@ def _required_text(value: object, label: str) -> str:
     return value.strip()
 
 
-def _daily_api_url(raw: str | None) -> str:
+def _env_secret(name: str) -> str:
+    value = os.environ.get(name)
+    if type(value) is not str or not value.strip():
+        raise RuntimeError(f"{name} is missing")
+    return value.strip()
+
+
+def _daily_api_url() -> str:
+    raw = os.environ.get("DAILY_API_URL")
     if raw is None:
         return _DAILY_API
-    if type(raw) is not str:
-        raise RuntimeError("akapulu call daily api url is missing")
+    if type(raw) is not str or not raw.strip():
+        raise RuntimeError("DAILY_API_URL is missing")
     url = raw.strip().rstrip("/")
     if not (url.startswith("https://") or url.startswith("http://")):
-        raise RuntimeError("akapulu call daily api url must be an http(s) URL")
+        raise RuntimeError("DAILY_API_URL must be an http(s) URL")
     return url
 
 
@@ -73,22 +83,20 @@ async def _token(
 
 async def create_akapulu_call(
     *,
-    daily_api_key: str,
-    akapulu_api_key: str,
     avatar_id: str,
     show_ai_label: bool,
     session: aiohttp.ClientSession,
     room_exp_secs: float,
-    daily_api_url: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Return room_url, bot token, browser token, and session_id.
 
-    Creates a private Daily room for three participants, mints the browser,
-    voice-bot, and worker tokens, and posts the live session. The worker
-    token is sent to Akapulu Labs and is not returned.
+    Reads DAILY_API_KEY and AKAPULU_API_KEY from the environment. Creates a
+    private Daily room for three participants, mints the browser, voice-bot,
+    and worker tokens, and posts the live session. The worker token is sent
+    to Akapulu Labs and is not returned.
     """
-    daily_key = _required_text(daily_api_key, "daily api key")
-    akapulu_key = _required_text(akapulu_api_key, "akapulu api key")
+    daily_key = _env_secret("DAILY_API_KEY")
+    akapulu_key = _env_secret("AKAPULU_API_KEY")
     avatar = _required_text(avatar_id, "avatar_id")
     try:
         avatar = str(uuid.UUID(avatar))
@@ -99,7 +107,7 @@ async def create_akapulu_call(
     if type(session) is not aiohttp.ClientSession:
         raise RuntimeError("akapulu call session is missing")
     exp_secs = _room_exp_secs(room_exp_secs)
-    daily_url = _daily_api_url(daily_api_url)
+    daily_url = _daily_api_url()
     origin = _django_origin()
 
     rest = DailyRESTHelper(

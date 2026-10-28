@@ -70,7 +70,6 @@ USER_NAME = BROWSER_NAME
 # Clara (public catalog). This is AI off.
 AVATAR_ID = "1f777f64-3758-4a7d-9cbc-c64ae654f7d1"
 SHOW_AI_LABEL = False
-_DAILY_API = "https://api.daily.co/v1"
 
 
 def _required(name: str) -> str:
@@ -78,15 +77,6 @@ def _required(name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise RuntimeError(f"{name} is missing")
     return value.strip()
-
-
-def daily_api_url(raw: str | None) -> str:
-    if raw is None:
-        return _DAILY_API
-    url = raw.strip().rstrip("/")
-    if not url.startswith("https://"):
-        raise RuntimeError("DAILY_API_URL must be an https URL")
-    return url
 
 
 def join_url(room_url: str, user_token: str) -> str:
@@ -188,13 +178,10 @@ class SpokenLanguage(FrameProcessor):
 async def create_call(session: aiohttp.ClientSession) -> tuple[str, str, str, str]:
     """Return room_url, bot token, browser token, and Akapulu session id."""
     return await create_akapulu_call(
-        daily_api_key=_required("DAILY_API_KEY"),
-        akapulu_api_key=_required("AKAPULU_API_KEY"),
         avatar_id=AVATAR_ID,
         show_ai_label=SHOW_AI_LABEL,
         session=session,
         room_exp_secs=ROOM_TTL_SECS,
-        daily_api_url=daily_api_url(os.environ.get("DAILY_API_URL")),
     )
 
 
