@@ -14,7 +14,7 @@ uv add pipecat-akapulu
 
 ## Use
 
-`create_akapulu_call` runs on your server before the bot starts. It reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. A missing or blank value raises. It creates a private Daily room for three participants, mints the browser, voice-bot, and worker tokens, and `POST /api/live-sessions/`. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is sent to Akapulu Labs and is not returned. The browser joins as `You`. The worker joins as `Avatar`. The Daily room lasts two hours, and Daily removes everyone when it expires.
+`create_akapulu_call` runs on your server before the bot starts. It reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. A missing or blank value raises. It creates a private Daily room for three participants, mints the browser, voice-bot, and worker tokens, and `POST /api/live-sessions/`. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is sent to Akapulu Labs and is not returned. The browser joins as `You`. The worker joins as `Avatar`. The Daily room lasts two hours unless you pass `room_exp_secs`. Daily removes everyone when it expires.
 
 ```python
 from pipecat_akapulu import AkapuluAvatar, create_akapulu_call

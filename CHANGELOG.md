@@ -4,7 +4,7 @@
 
 ## [0.1.10] - 2026-10-27
 
-- `create_akapulu_call` reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. It creates a private Daily room that lasts two hours, mints the browser, voice-bot, and worker tokens, and posts the live session. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is not returned.
+- `create_akapulu_call` reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. It creates a private Daily room, mints the browser, voice-bot, and worker tokens, and posts the live session. `room_exp_secs` defaults to two hours. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is not returned.
 
 ## [0.1.9] - 2026-10-27
 

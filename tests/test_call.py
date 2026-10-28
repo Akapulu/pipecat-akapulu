@@ -156,6 +156,9 @@ async def test_creates_the_room_and_posts_the_session() -> None:
         raise RuntimeError("Daily room left the prejoin UI on")
     if abs(props["exp"] - (started + ROOM_TTL_SECS)) > 30:
         raise RuntimeError("Daily room expiry was not two hours ahead")
+    for body in state["tokens"]:
+        if abs(body["properties"]["exp"] - (started + ROOM_TTL_SECS)) > 30:
+            raise RuntimeError("Daily token expiry was not two hours ahead")
     by_name = {}
     for body in state["tokens"]:
         token_props = body["properties"]
@@ -185,6 +188,18 @@ async def test_creates_the_room_and_posts_the_session() -> None:
         "avatar_token": "avatar-token",
     }:
         raise RuntimeError("live session body was wrong")
+
+
+async def test_room_exp_secs_overrides_the_default() -> None:
+    state = _state()
+    started = time.time()
+    await _call(state, room_exp_secs=600)
+    props = state["rooms"][0]["body"]["properties"]
+    if abs(props["exp"] - (started + 600)) > 30:
+        raise RuntimeError("Daily room expiry ignored room_exp_secs")
+    for body in state["tokens"]:
+        if abs(body["properties"]["exp"] - (started + 600)) > 30:
+            raise RuntimeError("Daily token expiry ignored room_exp_secs")
 
 
 async def test_live_session_error_includes_the_body() -> None:
@@ -232,6 +247,9 @@ async def test_rejects_bad_arguments() -> None:
                 {"avatar_id": "clara", "needle": "avatar_id"},
                 {"show_ai_label": "yes", "needle": "show_ai_label"},
                 {"session": None, "needle": "session"},
+                {"room_exp_secs": 0, "needle": "room_exp_secs"},
+                {"room_exp_secs": True, "needle": "room_exp_secs"},
+                {"room_exp_secs": -5, "needle": "room_exp_secs"},
             ]
             for update in cases:
                 kwargs = dict(base)
@@ -281,6 +299,7 @@ async def test_rejects_bad_arguments() -> None:
 def main() -> None:
     asyncio.run(test_rejects_bad_arguments())
     asyncio.run(test_creates_the_room_and_posts_the_session())
+    asyncio.run(test_room_exp_secs_overrides_the_default())
     asyncio.run(test_live_session_error_includes_the_body())
     asyncio.run(test_rejects_a_bad_session_id())
     uuid.UUID(SESSION_ID)
