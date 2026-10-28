@@ -4,10 +4,10 @@ The worker joins the Daily room stored on the session and publishes the
 face and the played audio there. This tap does not decode JPEGs and does
 not push pictures or playback audio.
 
-Open it with session_id. The sample rate is the pipeline audio-out rate,
-read in setup from FrameProcessorSetup.audio_out_sample_rate. It must be a
-positive multiple of 25 and match the assistant audio frames. Idle becomes
-speech on the first output chunk louder than the speaking threshold.
+Open it with session_id. Assistant audio is resampled to 24000 Hz mono
+before it is sent. A frame that is already 24000 Hz mono is sent unchanged.
+The worker always receives 24000. Idle becomes speech on the first output
+chunk louder than the speaking threshold.
 tail_secs defaults to 0.
 TTS stop starts that wait, and another loud chunk starts it over. The gate
 locks when the wait finishes.
@@ -25,8 +25,8 @@ updates for the whole boot. call_is_ready stays false until the first
 frame. Audio that arrives before the worker audio socket exists is queued.
 
 The session socket stays open for the life of the call. The first message
-is the sample rate and the session id. The worker answers with the private
-audio socket. Assistant PCM, speaking, and interrupt stay on that socket.
+is 24000 and the session id. The worker answers with the private audio
+socket. Assistant PCM, speaking, and interrupt stay on that socket.
 The original TTS frame is not forwarded.
 
 Ingest audio, bot to worker:
@@ -49,7 +49,7 @@ from loguru import logger
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedOK
 
-from pipecat.audio.utils import is_silence
+from pipecat.audio.utils import create_stream_resampler, is_silence
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.frames.frames import (
@@ -67,6 +67,7 @@ from pipecat.frames.frames import (
 )
 
 CHANNELS = 1
+_WIRE_RATE = 24000
 _PROD_DJANGO_ORIGIN = "https://akapulu.com"
 
 
@@ -97,9 +98,9 @@ class AkapuluAvatar(FrameProcessor):
     """Forward assistant audio. The GPU worker publishes the face into Daily.
 
     Pass session_id. The room and the avatar token are already on that
-    session. The sample rate is the pipeline audio-out rate, bound in
-    setup. tail_secs defaults to 0. TTS stop starts that wait, and
-    another loud chunk starts it over.
+    session. Assistant audio is resampled to 24000 Hz. A frame that is
+    already 24000 Hz mono is sent unchanged. tail_secs defaults to 0.
+    TTS stop starts that wait, and another loud chunk starts it over.
     """
 
     def __init__(
@@ -158,15 +159,12 @@ class AkapuluAvatar(FrameProcessor):
         self._tail_bytes = 0
         self._cutting = False
         self._cut_sent = False
-
-    def _bind(self, sample_rate: int) -> None:
-        if sample_rate < 25 or sample_rate % 25 != 0:
-            raise RuntimeError(f"akapulu avatar sample rate {sample_rate} is not a positive multiple of 25")
-        self._sample_rate = sample_rate
+        self._sample_rate = _WIRE_RATE
+        self._source_rate: int | None = None
+        self._resampler = None
 
     async def setup(self, setup: FrameProcessorSetup):
         await super().setup(setup)
-        self._bind(setup.audio_out_sample_rate)
         # The worker socket can take the whole GPU boot. StartFrame has to
         # pass this processor first or the loading messages cannot be pushed.
         self._open_task = self.create_task(self._open(), "akapulu-avatar-open")
@@ -201,6 +199,7 @@ class AkapuluAvatar(FrameProcessor):
             if self._cut_sent:
                 logger.info("akapulu avatar stop after interrupt, no flush")
             else:
+                await self._flush_wire_tail()
                 if self._tail_task is not None and not self._tail_task.done():
                     await self.cancel_task(self._tail_task)
                 self._tail_bytes = 0
@@ -213,12 +212,13 @@ class AkapuluAvatar(FrameProcessor):
         if isinstance(frame, (EndFrame, CancelFrame)):
             await self._close()
         elif isinstance(frame, OutputAudioRawFrame) and direction == FrameDirection.DOWNSTREAM:
+            rate = self._take_rate(frame)
             loud = _pcm_is_loud(frame.audio)
             if not self._accept_audio:
                 if not loud:
                     before = self._dropped_bytes
                     self._dropped_bytes += len(frame.audio)
-                    stride = self._sample_rate * 2
+                    stride = rate * 2
                     if before == 0 or before // stride != self._dropped_bytes // stride:
                         logger.info(
                             "akapulu avatar audio dropped while locked bytes={}",
@@ -242,8 +242,6 @@ class AkapuluAvatar(FrameProcessor):
         await self.push_frame(frame, direction)
 
     async def _open(self) -> None:
-        if not hasattr(self, "_sample_rate"):
-            raise RuntimeError("akapulu avatar setup has not bound the sample rate")
         if self._session is not None:
             return
         t0 = time.perf_counter()
@@ -519,6 +517,7 @@ class AkapuluAvatar(FrameProcessor):
             self._end_turn()
 
     async def _interrupt(self) -> None:
+        await self._discard_wire_tail()
         if self._tail_task is not None and not self._tail_task.done():
             await self.cancel_task(self._tail_task)
             self._tail_task = None
@@ -682,29 +681,68 @@ class AkapuluAvatar(FrameProcessor):
                 return
             await self._audio.send(message)
 
-    async def _ingest(self, frame: OutputAudioRawFrame) -> None:
-        if not hasattr(self, "_sample_rate"):
-            raise RuntimeError("akapulu avatar setup has not bound the sample rate")
+    def _take_rate(self, frame: OutputAudioRawFrame) -> int:
+        if frame.num_channels != CHANNELS:
+            raise RuntimeError(f"akapulu avatar expects mono audio, got {frame.num_channels} ch")
+        rate = frame.sample_rate
+        if type(rate) is not int or rate < 1:
+            raise RuntimeError(f"akapulu avatar sample rate {rate!r} is invalid")
+        pcm = frame.audio
+        if type(pcm) is not bytes:
+            raise RuntimeError(f"akapulu avatar pcm is {type(pcm).__name__}")
+        if len(pcm) % 2 != 0:
+            raise RuntimeError(f"akapulu avatar pcm length {len(pcm)} is not s16")
+        if self._source_rate is None:
+            self._source_rate = rate
+        elif rate != self._source_rate:
+            raise RuntimeError(
+                f"akapulu avatar sample rate changed from {self._source_rate} to {rate}"
+            )
+        return rate
+
+    async def _wire_pcm(self, frame: OutputAudioRawFrame) -> bytes:
+        rate = self._take_rate(frame)
+        if rate == _WIRE_RATE:
+            return frame.audio
+        if self._resampler is None:
+            # Hold the filter across gaps in one utterance. TTS stop flushes it,
+            # and an interrupt clears it.
+            self._resampler = create_stream_resampler(clear_after_secs=None)
+        return await self._resampler.resample(frame.audio, rate, _WIRE_RATE)
+
+    async def _send_pcm(self, pcm: bytes) -> None:
         if self._reader_error is not None:
             raise self._reader_error
-        if frame.sample_rate != self._sample_rate or frame.num_channels != CHANNELS:
-            raise RuntimeError(
-                f"akapulu avatar expects {self._sample_rate} Hz mono s16, "
-                f"got {frame.sample_rate} Hz {frame.num_channels} ch"
-            )
-        self._gate_bytes += len(frame.audio)
+        if len(pcm) < 2:
+            return
+        self._gate_bytes += len(pcm)
         seq = self._seq
         self._seq += 1
         t_send = time.perf_counter()
-        await self._send_or_queue(b"A" + struct.pack(">I", seq) + frame.audio)
+        await self._send_or_queue(b"A" + struct.pack(">I", seq) + pcm)
         send_ms = (time.perf_counter() - t_send) * 1000
         if send_ms > 20:
             logger.warning(
                 "akapulu avatar ingest slow seq={} send_ms={:.1f} bytes={}",
                 seq,
                 send_ms,
-                len(frame.audio),
+                len(pcm),
             )
+
+    async def _flush_wire_tail(self) -> None:
+        resampler = self._resampler
+        if resampler is None:
+            return
+        await self._send_pcm(await resampler.flush())
+
+    async def _discard_wire_tail(self) -> None:
+        resampler = self._resampler
+        if resampler is None:
+            return
+        await resampler.reset()
+
+    async def _ingest(self, frame: OutputAudioRawFrame) -> None:
+        await self._send_pcm(await self._wire_pcm(frame))
 
     async def _read_session(self) -> None:
         """Status arrives as the worker loads. Streams opens the audio socket."""
