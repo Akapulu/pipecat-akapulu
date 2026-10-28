@@ -19,41 +19,16 @@ def _load():
     return module
 
 
-def test_api_origin():
-    example = _load()
-    assert example.api_origin() == "https://akapulu.com"
-    # harness override
-    import os
-    previous = os.environ.get("AKAPULU_API_URL")
-    try:
-        os.environ["AKAPULU_API_URL"] = "https://akapulu.com/"
-        assert example.api_origin() == "https://akapulu.com"
-        os.environ["AKAPULU_API_URL"] = "   "
-        try:
-            example.api_origin()
-        except RuntimeError as exc:
-            assert "AKAPULU_API_URL" in str(exc)
-        else:
-            raise AssertionError("blank AKAPULU_API_URL was accepted")
-    finally:
-        if previous is None:
-            os.environ.pop("AKAPULU_API_URL", None)
-        else:
-            os.environ["AKAPULU_API_URL"] = previous
+def test_join_url_and_names():
+    import uuid
 
-
-def test_live_session_body_and_join_url():
     example = _load()
-    body = example.live_session_body(
-        room_url="https://example.daily.co/room",
-        avatar_token="avatar-token",
-    )
-    assert body == {
-        "avatar_id": "1f777f64-3758-4a7d-9cbc-c64ae654f7d1",
-        "show_ai_label": False,
-        "room_url": "https://example.daily.co/room",
-        "avatar_token": "avatar-token",
-    }
+    assert example.USER_NAME == "You"
+    assert example.AVATAR_NAME == "Avatar"
+    assert example.SHOW_AI_LABEL is False
+    uuid.UUID(example.AVATAR_ID)
+    assert not hasattr(example, "api_origin")
+    assert not hasattr(example, "live_session_body")
     assert (
         example.join_url("https://example.daily.co/room", "browser-token")
         == "https://example.daily.co/room?t=browser-token"
@@ -126,8 +101,7 @@ def test_spoken_language_locks_and_rejects_a_missing_language():
 
 
 if __name__ == "__main__":
-    test_api_origin()
-    test_live_session_body_and_join_url()
+    test_join_url_and_names()
     test_voice_stack()
     test_microphone_subscriptions()
     test_spoken_language_locks_and_rejects_a_missing_language()
