@@ -29,6 +29,7 @@ from pipecat_akapulu.avatar import _django_origin
 BROWSER_NAME = "You"
 AVATAR_NAME = "Avatar"
 _DAILY_API = "https://api.daily.co/v1"
+ROOM_TTL_SECS = 2 * 60 * 60
 
 
 def _required_text(value: object, label: str) -> str:
@@ -56,23 +57,16 @@ def _daily_api_url() -> str:
     return url
 
 
-def _room_exp_secs(value: object) -> float:
-    if type(value) not in (int, float) or value <= 0:
-        raise RuntimeError(f"akapulu call room_exp_secs {value!r} is invalid")
-    return float(value)
-
-
 async def _token(
     rest: DailyRESTHelper,
     room_url: str,
     *,
     owner: bool,
     properties: DailyMeetingTokenProperties,
-    room_exp_secs: float,
 ) -> str:
     token = await rest.get_token(
         room_url,
-        expiry_time=room_exp_secs,
+        expiry_time=ROOM_TTL_SECS,
         owner=owner,
         params=DailyMeetingTokenParams(properties=properties),
     )
@@ -86,14 +80,13 @@ async def create_akapulu_call(
     avatar_id: str,
     show_ai_label: bool,
     session: aiohttp.ClientSession,
-    room_exp_secs: float,
 ) -> tuple[str, str, str, str]:
     """Return room_url, bot token, browser token, and session_id.
 
     Reads DAILY_API_KEY and AKAPULU_API_KEY from the environment. Creates a
-    private Daily room for three participants, mints the browser, voice-bot,
-    and worker tokens, and posts the live session. The worker token is sent
-    to Akapulu Labs and is not returned.
+    private Daily room for three participants that lasts two hours, mints the
+    browser, voice-bot, and worker tokens, and posts the live session. The
+    worker token is sent to Akapulu Labs and is not returned.
     """
     daily_key = _env_secret("DAILY_API_KEY")
     akapulu_key = _env_secret("AKAPULU_API_KEY")
@@ -106,7 +99,6 @@ async def create_akapulu_call(
         raise RuntimeError(f"akapulu call show_ai_label {show_ai_label!r} is invalid")
     if type(session) is not aiohttp.ClientSession:
         raise RuntimeError("akapulu call session is missing")
-    exp_secs = _room_exp_secs(room_exp_secs)
     daily_url = _daily_api_url()
     origin = _django_origin()
 
@@ -119,7 +111,7 @@ async def create_akapulu_call(
         DailyRoomParams(
             privacy="private",
             properties=DailyRoomProperties(
-                exp=time.time() + exp_secs,
+                exp=time.time() + ROOM_TTL_SECS,
                 eject_at_room_exp=True,
                 enable_prejoin_ui=False,
                 enable_chat=False,
@@ -135,14 +127,12 @@ async def create_akapulu_call(
         room_url,
         owner=True,
         properties=DailyMeetingTokenProperties(is_owner=True),
-        room_exp_secs=exp_secs,
     )
     browser_token = await _token(
         rest,
         room_url,
         owner=False,
         properties=DailyMeetingTokenProperties(is_owner=False, user_name=BROWSER_NAME),
-        room_exp_secs=exp_secs,
     )
     avatar_token = await _token(
         rest,
@@ -160,7 +150,6 @@ async def create_akapulu_call(
                 "canAdmin": False,
             },
         ),
-        room_exp_secs=exp_secs,
     )
     url = f"{origin}/api/live-sessions/"
     async with session.post(

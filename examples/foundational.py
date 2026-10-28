@@ -65,7 +65,6 @@ FLUX_LANGUAGES = frozenset(
 )
 SETUP_TIMEOUT_SECS = 180.0
 USER_JOIN_TIMEOUT_SECS = 180.0
-ROOM_TTL_SECS = 2 * 60 * 60
 USER_NAME = BROWSER_NAME
 # Clara (public catalog). This is AI off.
 AVATAR_ID = "1f777f64-3758-4a7d-9cbc-c64ae654f7d1"
@@ -181,7 +180,6 @@ async def create_call(session: aiohttp.ClientSession) -> tuple[str, str, str, st
         avatar_id=AVATAR_ID,
         show_ai_label=SHOW_AI_LABEL,
         session=session,
-        room_exp_secs=ROOM_TTL_SECS,
     )
 
 

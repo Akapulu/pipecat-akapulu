@@ -26,7 +26,6 @@ def test_join_url_and_names():
     assert example.USER_NAME == "You"
     assert example.AVATAR_NAME == "Avatar"
     assert example.SHOW_AI_LABEL is False
-    assert example.ROOM_TTL_SECS == 2 * 60 * 60
     uuid.UUID(example.AVATAR_ID)
     assert not hasattr(example, "api_origin")
     assert not hasattr(example, "live_session_body")

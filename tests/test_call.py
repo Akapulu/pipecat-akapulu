@@ -8,7 +8,7 @@ import uuid
 import aiohttp
 from aiohttp import web
 
-from pipecat_akapulu.call import AVATAR_NAME, BROWSER_NAME, create_akapulu_call
+from pipecat_akapulu.call import AVATAR_NAME, BROWSER_NAME, ROOM_TTL_SECS, create_akapulu_call
 
 AVATAR_ID = "22222222-2222-2222-2222-222222222222"
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -116,7 +116,6 @@ async def _call(state: dict, **overrides):
     kwargs = {
         "avatar_id": AVATAR_ID,
         "show_ai_label": True,
-        "room_exp_secs": 7200,
     }
     kwargs.update(overrides)
     try:
@@ -155,8 +154,8 @@ async def test_creates_the_room_and_posts_the_session() -> None:
         raise RuntimeError("Daily room properties were wrong")
     if props["enable_prejoin_ui"] is not False:
         raise RuntimeError("Daily room left the prejoin UI on")
-    if abs(props["exp"] - (started + 7200)) > 30:
-        raise RuntimeError("Daily room expiry was not room_exp_secs ahead")
+    if abs(props["exp"] - (started + ROOM_TTL_SECS)) > 30:
+        raise RuntimeError("Daily room expiry was not two hours ahead")
     by_name = {}
     for body in state["tokens"]:
         token_props = body["properties"]
@@ -228,14 +227,11 @@ async def test_rejects_bad_arguments() -> None:
                 "avatar_id": AVATAR_ID,
                 "show_ai_label": False,
                 "session": session,
-                "room_exp_secs": 60,
             }
             cases = [
                 {"avatar_id": "clara", "needle": "avatar_id"},
                 {"show_ai_label": "yes", "needle": "show_ai_label"},
                 {"session": None, "needle": "session"},
-                {"room_exp_secs": 0, "needle": "room_exp_secs"},
-                {"room_exp_secs": True, "needle": "room_exp_secs"},
             ]
             for update in cases:
                 kwargs = dict(base)
@@ -272,7 +268,6 @@ async def test_rejects_bad_arguments() -> None:
                         avatar_id=AVATAR_ID,
                         show_ai_label=False,
                         session=session,
-                        room_exp_secs=60,
                     )
                 except RuntimeError as exc:
                     if name not in str(exc):
