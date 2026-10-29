@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - `examples/foundational.py` starts Flux and Sonic in English. A later committed turn in another language switches both.
+- `examples/foundational.py` turns off the Avatar microphone when that participant joins. The browser stays subscribed to it.
 
 ## [0.1.12] - 2026-10-28
 

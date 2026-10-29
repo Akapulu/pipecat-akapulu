@@ -52,18 +52,21 @@ def test_voice_stack():
     assert example.Language.ZH not in example.FLUX_LANGUAGES
 
 
-def test_microphone_subscriptions():
+def test_avatar_microphone_off():
     example = _load()
-    settings = example.microphone_subscriptions(
-        {
-            "local": {"info": {"isLocal": True, "userName": "Assistant"}},
-            "browser": {"info": {"userName": "You"}},
-            "avatar": {"info": {"userName": "Avatar"}},
-        }
-    )
-    assert settings["browser"]["media"]["microphone"] == "subscribed"
-    assert settings["avatar"]["media"]["microphone"] == "unsubscribed"
-    assert "local" not in settings
+    assert example.avatar_microphone_off({"id": "browser", "info": {"userName": "You"}}) is None
+    assert example.avatar_microphone_off(
+        {"id": "local", "info": {"isLocal": True, "userName": "Assistant"}}
+    ) is None
+    assert example.avatar_microphone_off({"id": "avatar", "info": {"userName": "Avatar"}}) == {
+        "avatar": {"media": {"microphone": "unsubscribed"}}
+    }
+    try:
+        example.avatar_microphone_off({"info": {"userName": "Avatar"}})
+    except RuntimeError as exc:
+        assert "id" in str(exc)
+    else:
+        raise AssertionError("avatar without an id was accepted")
 
 
 def test_spoken_language_locks_and_rejects_a_missing_language():
@@ -110,6 +113,6 @@ def test_spoken_language_locks_and_rejects_a_missing_language():
 if __name__ == "__main__":
     test_join_url_and_names()
     test_voice_stack()
-    test_microphone_subscriptions()
+    test_avatar_microphone_off()
     test_spoken_language_locks_and_rejects_a_missing_language()
     print("ok")
