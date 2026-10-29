@@ -88,6 +88,13 @@ def test_spoken_language_locks_and_rejects_a_missing_language():
     assert processor.pushed == []
 
     processor = Recording()
+    english = TranscriptionFrame(
+        "hello", "browser", "2026-10-25T00:00:00Z", Language.EN, finalized=True
+    )
+    asyncio.run(processor.process_frame(english, FrameDirection.DOWNSTREAM))
+    assert processor.pushed == [(english, FrameDirection.DOWNSTREAM)]
+
+    processor = Recording()
     turn = TranscriptionFrame(
         "hello", "browser", "2026-10-25T00:00:00Z", Language.JA, finalized=True
     )
