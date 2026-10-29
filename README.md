@@ -49,7 +49,7 @@ Those are not Daily audio or video tracks. With RTVI on the call (for example `@
 
 ## Example
 
-`examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Ariana voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. Daily Prebuilt shows you and the avatar. The bot greets when you join, and it listens only to that browser microphone. The call starts in English. A later committed turn in another language switches Flux and Sonic.
+`examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Ariana voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. Daily Prebuilt shows you and the avatar. The bot greets when you join. When the participant named Avatar joins, the bot turns that microphone off. The browser stays subscribed to it. The call starts in English. A later committed turn in another language switches Flux and Sonic.
 
 The example uses Clara, leaves **This is AI** off, and calls the Akapulu Labs production API.
 
