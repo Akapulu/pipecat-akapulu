@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `examples/foundational.py` starts Flux and Sonic in English. A later committed turn in another language switches both.
+
 ## [0.1.12] - 2026-10-28
 
 - The voice-bot meeting token is not an owner, and `permissions.hasPresence` is false. Daily Prebuilt shows the browser and the avatar. Daily ignores that permissions object on an owner token.

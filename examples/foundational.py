@@ -138,15 +138,15 @@ class BrowserMic(FrameProcessor):
 class SpokenLanguage(FrameProcessor):
     """Lock Flux and Sonic to the language of the latest committed turn.
 
-    The socket opens with no language hint, so the greeting and the first
-    turn are detected. A committed turn with no Flux language, or a language
-    outside the Flux set, raises. The same language does not send another
-    update. A different language sends both updates again.
+    The call starts in English. A committed turn in another Flux language
+    switches Flux and Sonic. A committed turn with no Flux language, or a
+    language outside the Flux set, raises. The same language does not send
+    another update.
     """
 
     def __init__(self):
         super().__init__()
-        self._locked: Language | None = None
+        self._locked = Language.EN
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -207,7 +207,7 @@ async def run_bot() -> None:
         enable_eager_end_of_turn=True,
         settings=DeepgramFluxSTTService.Settings(
             model=FLUX_MODEL,
-            language_hints=None,
+            language_hints=[Language.EN],
             eager_eot_threshold=EAGER_EOT_THRESHOLD,
         ),
     )
@@ -236,7 +236,7 @@ async def run_bot() -> None:
         settings=CartesiaTTSService.Settings(
             model=SONIC_MODEL,
             voice=SONIC_VOICE_ID,
-            language=None,
+            language=Language.EN,
         ),
     )
     avatar = AkapuluAvatar(session_id=session_id)
