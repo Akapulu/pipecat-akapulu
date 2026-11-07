@@ -45,7 +45,7 @@ def test_voice_stack():
     example = _load()
     assert example.SPEAKER_MODEL == "gpt-5.4-mini"
     assert example.SONIC_MODEL == "sonic-3.6"
-    assert example.SONIC_VOICE_ID == "ec1e269e-9ca0-402f-8a18-58e0e022355a"
+    assert example.SONIC_VOICE_ID == "86e30c1d-714b-4074-a1f2-1cb6b552fb49"
     assert example.FLUX_MODEL == "flux-general-multi"
     assert example.EAGER_EOT_THRESHOLD == 0.5
     assert example.Language.EN in example.FLUX_LANGUAGES
