@@ -46,8 +46,8 @@ from pipecat_akapulu import AVATAR_NAME, BROWSER_NAME, AkapuluAvatar, create_aka
 SAMPLE_RATE = 24000
 SPEAKER_MODEL = "gpt-5.4-mini"
 SONIC_MODEL = "sonic-3.6"
-# Ariana, Kind Friend. Same voice as the Akapulu Labs hosted bot.
-SONIC_VOICE_ID = "ec1e269e-9ca0-402f-8a18-58e0e022355a"
+# Carson, Curious Conversationalist. Male Sonic voice for Hollis.
+SONIC_VOICE_ID = "86e30c1d-714b-4074-a1f2-1cb6b552fb49"
 FLUX_MODEL = "flux-general-multi"
 EAGER_EOT_THRESHOLD = 0.5
 # Codes flux-general-multi returns, and the only codes this bot will lock.
@@ -68,8 +68,8 @@ FLUX_LANGUAGES = frozenset(
 SETUP_TIMEOUT_SECS = 180.0
 USER_JOIN_TIMEOUT_SECS = 180.0
 USER_NAME = BROWSER_NAME
-# Clara (public catalog). This is AI off.
-AVATAR_ID = "1f777f64-3758-4a7d-9cbc-c64ae654f7d1"
+# Hollis (public catalog). This is AI off.
+AVATAR_ID = "1285bfe4-3512-4b34-93ad-196098597a1c"
 SHOW_AI_LABEL = False
 
 

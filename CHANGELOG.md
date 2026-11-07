@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+-  defaults to Hollis and the male Cartesia Sonic voice.
+
+
 ## [Unreleased]
 
 - `examples/foundational.py` starts Flux and Sonic in English. A later committed turn in another language switches both.
