@@ -1,9 +1,9 @@
 # Changelog
 
-## Unreleased
+## [0.1.13] - 2026-11-09
 
--  defaults to Hollis and the male Cartesia Sonic voice.
-
+- `examples/foundational.py` defaults to Hollis and the male Cartesia Sonic voice. Every public catalog avatar stays enabled for `avatar_id`.
+- README matches that example default (PyPI description was still on Clara from 0.1.12).
 
 ## [Unreleased]
 

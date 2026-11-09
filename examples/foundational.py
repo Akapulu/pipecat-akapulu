@@ -68,7 +68,8 @@ FLUX_LANGUAGES = frozenset(
 SETUP_TIMEOUT_SECS = 180.0
 USER_JOIN_TIMEOUT_SECS = 180.0
 USER_NAME = BROWSER_NAME
-# Hollis (public catalog). This is AI off.
+# Default: Hollis (public catalog). Every public catalog avatar is enabled.
+# This is AI off.
 AVATAR_ID = "1285bfe4-3512-4b34-93ad-196098597a1c"
 SHOW_AI_LABEL = False
 
