@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.15] - 2026-11-09
+
+- README matches the Pipecat service page. The worker publishes avatar video and audio. The voice bot has no Daily tile. The worker can take 5 to 10 seconds to start. Rendering starts after about 800 ms of assistant audio, and the render itself takes about 150 ms.
+
 ## [0.1.14] - 2026-11-09
 
 - README / example comments drop the extra “all public avatars enabled” line. Hollis stays the example default.
