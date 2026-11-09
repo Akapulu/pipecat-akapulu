@@ -2,7 +2,7 @@
 
 Pipecat processor for an [Akapulu Labs](https://akapulu.com) talking avatar. Maintained by Akapulu Labs.
 
-The `AkapuluAvatar` Pipecat plugin sits after your speech model. It sends assistant audio to the Akapulu Labs worker. The Akapulu Labs worker joins the Daily room already stored on the session and publishes the face and the played audio. It does not publish either.
+The `AkapuluAvatar` Pipecat plugin sits after your speech model. It sends assistant audio to the Akapulu Labs worker. The worker joins the Daily room for that call and publishes the avatar video and audio. Your voice bot itself does not publish camera or microphone.
 
 Tested with Pipecat 1.14.0. Requires Pipecat 1.12.0 or newer.
 
@@ -14,7 +14,7 @@ uv add pipecat-akapulu
 
 ## Use
 
-`create_akapulu_call` runs on your server before the bot starts. It reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. A missing or blank value raises. It creates a private Daily room for three participants, mints the browser, voice-bot, and worker tokens, and `POST /api/live-sessions/`. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is sent to Akapulu Labs and is not returned. The browser joins as `You`. The worker joins as `Avatar`. The voice-bot token is not a meeting owner, and its permissions set `hasPresence` to false. Daily ignores that permissions object on an owner token. Daily Prebuilt then shows the browser and the avatar. The Daily room lasts two hours unless you pass `room_exp_secs`. Daily removes everyone when it expires.
+`create_akapulu_call` runs on your server before the bot starts. It reads `DAILY_API_KEY` and `AKAPULU_API_KEY`. A missing or blank value raises. It creates a private Daily room for three participants, mints the browser, voice-bot, and worker tokens, and `POST /api/live-sessions/`. It returns the room URL, the bot token, the browser token, and `session_id`. The worker token is sent to Akapulu Labs and is not returned. The browser joins as `You`. The worker joins as `Avatar`. Daily shows the end user and the avatar. The voice bot is in the room and does not get its own tile. `create_akapulu_call` spawns an avatar worker. That worker can take 5 to 10 seconds to start up. The Daily room lasts two hours unless you pass `room_exp_secs`. Daily removes everyone when it expires.
 
 ```python
 from pipecat_akapulu import AkapuluAvatar, create_akapulu_call
@@ -29,15 +29,13 @@ avatar = AkapuluAvatar(session_id=session_id)
 
 The bot joins Daily with `bot_token`. The browser joins with `browser_token`. Pass `session_id` to `AkapuluAvatar`.
 
-A bot that already has a Daily room skips `create_akapulu_call`. Mint the worker token and `POST /api/live-sessions/` with `avatar_id`, `show_ai_label`, `room_url`, and `avatar_token`. The response is `session_id`.
+A bot that already has a Daily room skips `create_akapulu_call`. Mint the avatar worker token and POST `/api/live-sessions/` to Akapulu Labs with `avatar_id`, `show_ai_label`, `room_url`, and `avatar_token`. The response is `session_id`. The avatar worker joins the room as `Avatar` and publishes audio and video. Its token needs permission to send audio and video.
 
-Assistant audio is resampled to 24000 Hz mono before it is sent. A frame that is already 24000 Hz mono is sent unchanged. The worker always receives 24000.
+When you construct your voice bot and create your transport processor, leave audio out and video out off. Your voice bot will not publish audio or video into the Daily room. The Akapulu Labs avatar worker publishes the audio and video. Add `AkapuluAvatar` after your TTS processor so it forwards that audio to the avatar worker.
 
-Leave transport audio out and video out off. The Akapulu Labs worker is the Daily publisher for the face and the played audio.
+The avatar worker needs about 800 ms of assistant audio before it starts rendering the video. The render itself, given the audio, only takes around 150ms. You might see added latency in your bot's response even if your TTS provider's TTFA is low, due to this buffer accumulation. A TTS that trickles audio in slowly fills that buffer late, so the response is slower and the avatar gestures less. We recommend a TTS that sends audio in waves. Cartesia has been the best in our testing.
 
-The worker starts the face only after a short stretch of assistant audio has arrived. Speech-to-speech models often reach that first audio quickly, then trickle, so the buffer fills slowly. A streaming TTS keeps the audio coming after the first chunk, which fills the buffer sooner. Cartesia has been the best mix we have tried: a low time to first audio, and audio that keeps arriving quickly enough to fill that buffer.
-
-The `AkapuluAvatar` Pipecat plugin connects to the Akapulu Labs worker in the background. When the pipeline starts, it forwards `StartFrame` right away so your voice bot keeps moving. It does not wait for the first face frame.
+The `AkapuluAvatar` Pipecat plugin connects to the Akapulu Labs worker in the background. When the pipeline starts, it forwards `StartFrame` right away so your voice bot keeps moving. It does not wait for the first video frame.
 
 While the Akapulu Labs worker boots, the plugin pushes **RTVI server messages** into your voice-bot pipeline. Each message body has `type` `status` and these fields:
 
