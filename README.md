@@ -51,7 +51,7 @@ Those are not Daily audio or video tracks. With RTVI on the call (for example `@
 
 `examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Carson male voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. Daily Prebuilt shows you and the avatar. The bot greets when you join. When the participant named Avatar joins, the bot turns that microphone off. The browser stays subscribed to it. The call starts in English. A later committed turn in another language switches Flux and Sonic.
 
-The example defaults to Hollis and leaves **This is AI** off. Every public catalog avatar is enabled; pass another public `avatar_id` to use it. The example calls the Akapulu Labs production API.
+The example uses Hollis, leaves **This is AI** off, and calls the Akapulu Labs production API.
 
 The same voice stack, a local server, and a browser page are in [akapulu-examples](https://github.com/Akapulu/akapulu-examples).
 
