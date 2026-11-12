@@ -54,7 +54,7 @@ The example uses Hollis, leaves **This is AI** off, and calls the Akapulu Labs p
 The same voice stack, a local server, and a browser page are in [akapulu-examples](https://github.com/Akapulu/akapulu-examples).
 
 ```bash
-uv add "pipecat-ai[daily,deepgram,openai,cartesia]==1.14.0" pipecat-akapulu
+uv add "pipecat-ai[daily,deepgram,openai,cartesia]>=1.14.0" pipecat-akapulu
 ```
 
 Set `DAILY_API_KEY` and `AKAPULU_API_KEY`. Also set `DEEPGRAM_API_KEY`, `OPENAI_API_KEY`, and `CARTESIA_API_KEY`. Then:
