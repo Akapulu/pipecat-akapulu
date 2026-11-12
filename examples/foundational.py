@@ -14,7 +14,7 @@ plugin origin. Deepgram Flux hears the caller. gpt-5.4-mini speaks. Cartesia
 Sonic 3.6 speaks each finished sentence. Set DAILY_API_KEY,
 AKAPULU_API_KEY, DEEPGRAM_API_KEY, OPENAI_API_KEY, and CARTESIA_API_KEY.
 
-Tested with Pipecat 1.14.0.
+Tested with Pipecat 1.14.0, 1.15.0, and 1.16.0.
 """
 
 import asyncio
