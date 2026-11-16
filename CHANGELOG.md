@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- `call_is_ready` is owned by `AkapuluAvatar`: `note_avatar_video_frame()` after Daily
+  `capture_participant_video`, then emit RTVI ready. Worker/Django poll ready is forced
+  false until that gate. Assistant PCM stays locked until then.
+
 - `examples/foundational.py` starts Flux and Sonic in English. A later committed turn in another language switches both.
 - `examples/foundational.py` turns off the Avatar microphone when that participant joins. The browser stays subscribed to it.
 

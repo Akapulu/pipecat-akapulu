@@ -21,8 +21,15 @@ forwarded immediately, after a POST of {} to the live-session status
 route. That stamps "Conversation engine joined the call..." for every
 pipeline that includes this tap. Loading status is an RTVI server message on
 this same pipe, so holding StartFrame until the GPU joins would hide those
-updates for the whole boot. call_is_ready stays false until the first
-frame. Audio that arrives before the worker audio socket exists is queued.
+updates for the whole boot.
+
+``call_is_ready`` is owned by this tap, not the worker. Capture Avatar
+camera frames in the voice bot (Daily ``capture_participant_video``) and
+call ``note_avatar_video_frame`` for each one. After
+``_READY_VIDEO_FRAMES`` decoded frames, this tap emits the RTVI status with
+``call_is_ready`` true. Worker and Django poll status that claim ready are
+forced false until then. Assistant PCM stays locked until that gate opens.
+Audio that arrives before the worker audio socket exists is queued.
 
 The session socket stays open for the life of the call. The first message
 is 24000 and the session id. The worker answers with the private audio
@@ -68,6 +75,10 @@ from pipecat.frames.frames import (
 
 CHANNELS = 1
 _WIRE_RATE = 24000
+# Avatar camera frames this tap must see before call_is_ready (and before
+# assistant PCM unlocks). First idle frame plus a short buffer so the
+# subscriber path is warm before the frontend drops the spinner / greets.
+_READY_VIDEO_FRAMES = 5
 _PROD_DJANGO_ORIGIN = "https://akapulu.com"
 
 
@@ -151,6 +162,9 @@ class AkapuluAvatar(FrameProcessor):
         self._closed = False
         self._status_task = None
         self._accept_audio = False
+        self._video_frames = 0
+        self._video_ready = asyncio.Event()
+        self._ready_emitted = False
         self._gate_bytes = 0
         self._gate_opened_at = 0.0
         self._tts_stopped_at = 0.0
@@ -172,6 +186,54 @@ class AkapuluAvatar(FrameProcessor):
     async def cleanup(self):
         await self._close()
         await super().cleanup()
+
+    @property
+    def call_is_ready(self) -> bool:
+        return self._video_ready.is_set()
+
+    async def wait_until_call_ready(self, *, timeout: float = _SESSION_TIMEOUT_SECS) -> None:
+        """Wait until this tap has decoded enough Avatar video frames."""
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            raise RuntimeError(f"akapulu avatar call_is_ready timeout is {timeout!r}")
+        try:
+            await asyncio.wait_for(self._video_ready.wait(), timeout=timeout)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"akapulu avatar call_is_ready was not set within {timeout}s"
+            ) from exc
+
+    async def note_avatar_video_frame(self) -> None:
+        """Count one decoded Avatar camera frame toward call_is_ready.
+
+        The voice bot must capture Avatar video (Daily
+        ``capture_participant_video``) and call this for each frame. After
+        ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with call_is_ready
+        true and unlock assistant PCM.
+        """
+        if self._closed or self._ready_emitted:
+            return
+        self._video_frames += 1
+        if self._video_frames < _READY_VIDEO_FRAMES:
+            logger.info(
+                "akapulu avatar video frame {}/{}",
+                self._video_frames,
+                _READY_VIDEO_FRAMES,
+            )
+            return
+        self._ready_emitted = True
+        self._video_ready.set()
+        logger.info(
+            "akapulu avatar call_is_ready after video_frames={}",
+            self._video_frames,
+        )
+        await self._emit_status(
+            {
+                "type": "status",
+                "call_is_ready": True,
+                "latest_update_text": "Media stream active...",
+                "completion_percent": 100,
+            }
+        )
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -215,13 +277,15 @@ class AkapuluAvatar(FrameProcessor):
             rate = self._take_rate(frame)
             loud = _pcm_is_loud(frame.audio)
             if not self._accept_audio:
-                if not loud:
+                if not loud or not self._video_ready.is_set():
                     before = self._dropped_bytes
                     self._dropped_bytes += len(frame.audio)
                     stride = rate * 2
                     if before == 0 or before // stride != self._dropped_bytes // stride:
+                        reason = "locked" if self._video_ready.is_set() else "before_video_ready"
                         logger.info(
-                            "akapulu avatar audio dropped while locked bytes={}",
+                            "akapulu avatar audio dropped while {} bytes={}",
+                            reason,
                             self._dropped_bytes,
                         )
                     return
@@ -357,7 +421,9 @@ class AkapuluAvatar(FrameProcessor):
             percent = self._status_percent
         return {
             "type": "status",
-            "call_is_ready": ready,
+            # Django/worker may claim ready after gpu_first_frame. The
+            # subscriber gate owns the official flag for the frontend.
+            "call_is_ready": self._video_ready.is_set(),
             "latest_update_text": text,
             "completion_percent": percent,
         }
@@ -399,11 +465,11 @@ class AkapuluAvatar(FrameProcessor):
         try:
             while not self._closed:
                 await asyncio.sleep(0.5)
-                if self._closed:
+                if self._closed or self._video_ready.is_set():
                     return
                 payload = await asyncio.to_thread(self._fetch_worker_poll)
                 await self._emit_poll_status(payload)
-                if payload.get("call_is_ready") is True:
+                if self._video_ready.is_set():
                     return
         except asyncio.CancelledError:
             raise
@@ -424,12 +490,18 @@ class AkapuluAvatar(FrameProcessor):
             raise self._open_error
 
     async def _emit_status(self, body: dict) -> None:
-        percent = body.get("completion_percent")
+        if not isinstance(body, dict):
+            raise RuntimeError("akapulu avatar status body is not an object")
+        out = dict(body)
+        if out.get("type") == "status":
+            # Worker socket and Django poll must not open the frontend early.
+            out["call_is_ready"] = self._video_ready.is_set()
+        percent = out.get("completion_percent")
         if type(percent) is int and (
             self._status_percent is None or percent > self._status_percent
         ):
             self._status_percent = percent
-        frame = RTVIServerMessageFrame(data=body)
+        frame = RTVIServerMessageFrame(data=out)
         async with self._status_lock:
             if not self._pipeline_started:
                 self._queued_status.append(frame)
@@ -466,6 +538,8 @@ class AkapuluAvatar(FrameProcessor):
 
     async def _open_from_idle(self) -> None:
         """Idle becomes speech. The stop and the tail flush stay on TTSStoppedFrame."""
+        if not self._video_ready.is_set():
+            raise RuntimeError("akapulu avatar opened from idle before call_is_ready")
         if self._accept_audio:
             raise RuntimeError("akapulu avatar opened from idle while the gate was open")
         self._gate_bytes = 0

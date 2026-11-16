@@ -152,6 +152,13 @@ def _pcm(sample: int, count: int = 48) -> bytes:
     return struct.pack("<h", sample) * count
 
 
+
+def _mark_subscriber_ready(tap: AkapuluAvatar) -> None:
+    """Unit tests that exercise the PCM gate after the video buffer."""
+    tap._video_ready.set()
+    tap._ready_emitted = True
+
+
 async def _push_audio(tap: AkapuluAvatar, pcm: bytes) -> None:
     await tap.process_frame(
         OutputAudioRawFrame(audio=pcm, sample_rate=24000, num_channels=1),
@@ -161,6 +168,7 @@ async def _push_audio(tap: AkapuluAvatar, pcm: bytes) -> None:
 
 async def test_idle_opens_on_loud_audio_not_tts_started() -> None:
     tap = _tap("wss://example.invalid/live")
+    _mark_subscriber_ready(tap)
     pushed = []
 
     async def push(frame, direction=FrameDirection.DOWNSTREAM):
@@ -200,6 +208,7 @@ async def test_idle_opens_on_loud_audio_not_tts_started() -> None:
 
 async def test_threshold_sample_stays_idle() -> None:
     tap = _tap("wss://example.invalid/live")
+    _mark_subscriber_ready(tap)
 
     async def push(frame, direction=FrameDirection.DOWNSTREAM):
         return None
@@ -214,8 +223,22 @@ async def test_threshold_sample_stays_idle() -> None:
         raise RuntimeError("a sample above the speaking threshold stayed idle")
 
 
+
+async def test_loud_audio_before_video_ready_stays_locked() -> None:
+    tap = _tap("wss://example.invalid/live")
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        return None
+
+    tap.push_frame = push
+    tap._audio = _Audio()
+    await _push_audio(tap, _pcm(1000))
+    if tap._accept_audio or tap._audio.sent:
+        raise RuntimeError("loud audio opened before video ready")
+
 async def test_loud_audio_during_tail_restarts_the_lock() -> None:
     tap = _tap("wss://example.invalid/live")
+    _mark_subscriber_ready(tap)
 
     async def push(frame, direction=FrameDirection.DOWNSTREAM):
         return None
@@ -451,6 +474,7 @@ async def test_unexpected_audio_close_is_a_reader_error() -> None:
 
 async def test_tts_stopped_still_schedules_the_tail() -> None:
     tap = _tap("wss://example.invalid/live")
+    _mark_subscriber_ready(tap)
 
     async def push(frame, direction=FrameDirection.DOWNSTREAM):
         return None
@@ -887,11 +911,12 @@ def test_poll_does_not_rewind_socket_status() -> None:
 
 async def test_poll_continues_after_the_url() -> None:
     tap = _tap()
+    delayed = "Your avatar's shaking off the cobwebs — taking a bit longer than usual, hang tight"
     script = [
         _poll(worker_wss_url="wss://example.invalid/live", completion_percent=50),
         _poll(
             worker_wss_url="wss://example.invalid/live",
-            latest_update_text="Your avatar's shaking off the cobwebs — taking a bit longer than usual, hang tight",
+            latest_update_text=delayed,
             assistant_startup_delayed=True,
         ),
         _poll(
@@ -911,20 +936,32 @@ async def test_poll_continues_after_the_url() -> None:
     url = await tap._wait_worker_wss()
     if url != "wss://example.invalid/live":
         raise RuntimeError(f"worker url was {url}")
-    await asyncio.wait_for(tap._poll_updates(), 3)
-    texts = [frame.data["latest_update_text"] for frame in tap._queued_status]
+    task = asyncio.create_task(tap._poll_updates())
+    for _ in range(100):
+        if len(tap._queued_status) >= 3:
+            # Stop the poll before it fetches again with an empty script.
+            tap._video_ready.set()
+            break
+        await asyncio.sleep(0.05)
+    else:
+        task.cancel()
+        raise RuntimeError(f"poll statuses were {[f.data for f in tap._queued_status]}")
+    await asyncio.wait_for(task, 3)
+    texts = [frame.data["latest_update_text"] for frame in tap._queued_status[:3]]
     if texts != [
         "Creating call room...",
-        "Your avatar's shaking off the cobwebs — taking a bit longer than usual, hang tight",
+        delayed,
         "Media stream active...",
     ]:
         raise RuntimeError(f"continued poll status was {texts}")
     if tap._queued_status[1].data["completion_percent"] != 50:
         raise RuntimeError("delay percent was rewound")
-    if tap._queued_status[-1].data["call_is_ready"] is not True:
-        raise RuntimeError("ready poll was not pushed")
+    for frame in tap._queued_status[:3]:
+        if frame.data["call_is_ready"] is not False:
+            raise RuntimeError("poll ready must stay false until video frames")
     if script:
         raise RuntimeError(f"poll stopped early: {script}")
+
 
 
 async def test_status_read_timeout_is_retried() -> None:
@@ -1067,8 +1104,59 @@ async def main() -> None:
     await test_unexpected_audio_close_is_a_reader_error()
     await test_tts_stopped_still_schedules_the_tail()
     await test_ingest_packet()
+    await test_loud_audio_before_video_ready_stays_locked()
+    await test_video_frames_emit_call_is_ready()
+    await test_worker_status_ready_stays_false_until_video()
     print("AKAPULU_AVATAR_ROOM_OK")
 
+
+
+
+async def test_video_frames_emit_call_is_ready() -> None:
+    tap = _tap()
+    for _ in range(4):
+        await tap.note_avatar_video_frame()
+        if tap.call_is_ready:
+            raise RuntimeError("call_is_ready before the buffer filled")
+    await tap.note_avatar_video_frame()
+    if not tap.call_is_ready:
+        raise RuntimeError("call_is_ready was not set after video frames")
+    if not tap._queued_status:
+        raise RuntimeError("ready status was not queued")
+    body = tap._queued_status[-1].data
+    if body.get("call_is_ready") is not True:
+        raise RuntimeError(f"ready status was {body}")
+    if body.get("completion_percent") != 100:
+        raise RuntimeError(f"ready percent was {body.get('completion_percent')}")
+
+
+async def test_worker_status_ready_stays_false_until_video() -> None:
+    tap = _tap()
+    await tap._emit_status(
+        {
+            "type": "status",
+            "call_is_ready": True,
+            "latest_update_text": "Media stream active...",
+            "completion_percent": 100,
+        }
+    )
+    if tap._queued_status[-1].data["call_is_ready"] is not False:
+        raise RuntimeError("worker ready leaked before video frames")
+    await tap.note_avatar_video_frame()
+    await tap.note_avatar_video_frame()
+    await tap.note_avatar_video_frame()
+    await tap.note_avatar_video_frame()
+    await tap.note_avatar_video_frame()
+    await tap._emit_status(
+        {
+            "type": "status",
+            "call_is_ready": False,
+            "latest_update_text": "Media stream active...",
+            "completion_percent": 100,
+        }
+    )
+    if tap._queued_status[-1].data["call_is_ready"] is not True:
+        raise RuntimeError("local ready was cleared by a later worker status")
 
 if __name__ == "__main__":
     asyncio.run(main())

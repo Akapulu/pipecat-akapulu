@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.frames.frames import (
     LLMRunFrame,
+    UserImageRawFrame,
     STTUpdateSettingsFrame,
     TranscriptionFrame,
     TTSUpdateSettingsFrame,
@@ -98,6 +99,26 @@ def _daily_user_name(participant: dict) -> str:
     return name
 
 
+
+
+class NoteAvatarVideo(FrameProcessor):
+    """Count Avatar camera frames into AkapuluAvatar until call_is_ready."""
+
+    def __init__(self, avatar: AkapuluAvatar, avatar_participant_ids: set[str]):
+        super().__init__()
+        if not isinstance(avatar, AkapuluAvatar):
+            raise RuntimeError("avatar tap is missing")
+        self._avatar = avatar
+        self._avatar_ids = avatar_participant_ids
+
+    async def process_frame(self, frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, UserImageRawFrame):
+            if frame.user_id in self._avatar_ids:
+                await self._avatar.note_avatar_video_frame()
+            return
+        await self.push_frame(frame, direction)
+
 def avatar_microphone_off(participant: dict) -> dict | None:
     """The one Daily subscription change. None for every participant except Avatar."""
     if _daily_user_name(participant) != AVATAR_NAME:
@@ -170,6 +191,7 @@ async def run_bot() -> None:
         DailyParams(
             audio_in_enabled=True,
             audio_out_enabled=False,
+            video_in_enabled=True,
             video_out_enabled=False,
         ),
     )
@@ -245,6 +267,10 @@ async def run_bot() -> None:
     async def on_joined(_transport, _data):
         logger.info("Voice bot joined Daily")
 
+    async def greet_when_ready() -> None:
+        await avatar.wait_until_call_ready(timeout=SETUP_TIMEOUT_SECS)
+        await worker.queue_frames([LLMRunFrame()])
+
     @transport.event_handler("on_participant_joined")
     async def on_participant_joined(_transport, participant):
         if not isinstance(participant, dict):
@@ -256,16 +282,21 @@ async def run_bot() -> None:
         logger.info("Daily participant joined {}", name)
         settings = avatar_microphone_off(participant)
         if settings is not None:
+            participant_id = participant.get("id")
+            if not isinstance(participant_id, str) or not participant_id:
+                raise RuntimeError("Daily avatar participant has no id")
+            avatar_participant_ids.add(participant_id)
             error = await transport.update_subscriptions(participant_settings=settings)
             if error:
                 raise RuntimeError(f"Daily avatar microphone unsubscribe failed: {error}")
+            await transport.capture_participant_video(participant_id, framerate=None)
             return
         if name != USER_NAME:
             raise RuntimeError(f"Daily participant {name} is not the browser or the avatar")
         if joined.is_set():
             raise RuntimeError("Daily browser joined twice")
         joined.set()
-        await worker.queue_frames([LLMRunFrame()])
+        asyncio.create_task(greet_when_ready())
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):

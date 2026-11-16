@@ -39,7 +39,7 @@ The `AkapuluAvatar` Pipecat plugin connects to the Akapulu Labs worker in the ba
 
 While the Akapulu Labs worker boots, the plugin pushes **RTVI server messages** into your voice-bot pipeline. Each message body has `type` `status` and these fields:
 
-- `call_is_ready`: whether the Akapulu Labs worker has published the first frame
+- `call_is_ready`: whether this tap has decoded enough Avatar video frames on the voice bot
 - `completion_percent`: how far startup has gotten (0 to 100)
 - `latest_update_text`: the latest human-readable startup line
 
@@ -47,7 +47,7 @@ Those are not Daily audio or video tracks. With RTVI on the call (for example `@
 
 ## Example
 
-`examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Carson male voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. Daily Prebuilt shows you and the avatar. The bot greets when you join. When the participant named Avatar joins, the bot turns that microphone off. The browser stays subscribed to it. The call starts in English. A later committed turn in another language switches Flux and Sonic.
+`examples/foundational.py` calls `create_akapulu_call`, then runs the voice bot. Deepgram Flux (`flux-general-multi`) hears the caller. OpenAI `gpt-5.4-mini` speaks, with reasoning off. Cartesia Sonic 3.6 speaks each finished sentence, using the Carson male voice. `AkapuluAvatar` sits after that audio. It prints a join URL. Open that URL. Daily Prebuilt shows you and the avatar. When the participant named Avatar joins, the bot turns that microphone off, captures its camera, and greets after a few decoded video frames. The browser stays subscribed to it. The call starts in English. A later committed turn in another language switches Flux and Sonic.
 
 The example uses Hollis, leaves **This is AI** off, and calls the Akapulu Labs production API.
 
