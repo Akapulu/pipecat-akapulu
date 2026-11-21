@@ -40,6 +40,9 @@ Ingest audio, bot to worker:
   A + uint32 ingest sequence + pcm
 Speaking text on the audio socket:
   {"type":"speaking","who":"bot"|"user","state":"started"|"stopped"|"interrupted"}
+Worker replies with ``{"type":"idle"}`` after the last live speech PCM has
+been published into Daily. That ack is what emits ``BotStoppedSpeakingFrame``.
+TTS stop alone is not enough: the worker still has audio to publish.
 """
 
 import asyncio
@@ -171,6 +174,7 @@ class AkapuluAvatar(FrameProcessor):
         self._dropped_bytes = 0
         self._tail_task: asyncio.Task | None = None
         self._tail_bytes = 0
+        self._idle_event: asyncio.Event | None = None
         self._cutting = False
         self._cut_sent = False
         self._sample_rate = _WIRE_RATE
@@ -254,10 +258,8 @@ class AkapuluAvatar(FrameProcessor):
         if isinstance(frame, TTSStoppedFrame):
             self._tts_stopped_at = time.perf_counter()
             self._log_audio_end_hint("tts_stopped")
-            stopped = BotStoppedSpeakingFrame()
-            await self.push_frame(stopped, FrameDirection.UPSTREAM)
-            await self.push_frame(stopped)
-            logger.info("akapulu avatar sent bot-stopped-speaking")
+            # Do not emit BotStoppedSpeakingFrame here. TTS stop is earlier than
+            # Daily playout; wait for worker {"type":"idle"} in _lock_after_tail.
             if self._cut_sent:
                 logger.info("akapulu avatar stop after interrupt, no flush")
             else:
@@ -595,11 +597,23 @@ class AkapuluAvatar(FrameProcessor):
             "akapulu avatar audio locked after tail tail_bytes={}",
             self._tail_bytes,
         )
+        self._idle_event = asyncio.Event()
         try:
             await self._send_speaking("bot", "stopped")
+            await self._idle_event.wait()
         except ConnectionClosedOK:
             if not self._closed:
                 logger.info("akapulu avatar audio socket closed")
+            if self._in_bot_turn:
+                self._end_turn()
+            return
+        finally:
+            self._idle_event = None
+        self._log_audio_end_hint("worker_idle")
+        stopped = BotStoppedSpeakingFrame()
+        await self.push_frame(stopped, FrameDirection.UPSTREAM)
+        await self.push_frame(stopped)
+        logger.info("akapulu avatar sent bot-stopped-speaking after idle")
         if self._in_bot_turn:
             self._end_turn()
 
@@ -608,6 +622,8 @@ class AkapuluAvatar(FrameProcessor):
         if self._tail_task is not None and not self._tail_task.done():
             await self.cancel_task(self._tail_task)
             self._tail_task = None
+        if self._idle_event is not None and not self._idle_event.is_set():
+            self._idle_event.set()
         speaking = self._accept_audio or self._in_bot_turn
         self._accept_audio = False
         if not speaking or self._cut_sent:
@@ -621,13 +637,23 @@ class AkapuluAvatar(FrameProcessor):
         if self._in_bot_turn:
             self._end_turn()
 
-    async def _take_cut(self, text: str) -> None:
+    async def _take_worker_text(self, text: str) -> None:
         try:
             body = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise RuntimeError("akapulu avatar cut message is not JSON") from exc
-        if body.get("type") != "cut":
-            raise RuntimeError(f"akapulu avatar audio socket rejected text {body.get('type')!r}")
+            raise RuntimeError("akapulu avatar audio socket text is not JSON") from exc
+        if not isinstance(body, dict):
+            raise RuntimeError("akapulu avatar audio socket text is not an object")
+        kind = body.get("type")
+        if kind == "idle":
+            if self._idle_event is None:
+                logger.info("akapulu avatar idle with no pending stop")
+                return
+            self._idle_event.set()
+            logger.info("akapulu avatar idle ack")
+            return
+        if kind != "cut":
+            raise RuntimeError(f"akapulu avatar audio socket rejected text {kind!r}")
         drained = body.get("drained")
         if drained not in (0, 1):
             raise RuntimeError(f"akapulu avatar cut drained is {drained!r}")
@@ -653,7 +679,7 @@ class AkapuluAvatar(FrameProcessor):
             while not self._closed:
                 message = await self._audio.recv()
                 if isinstance(message, str):
-                    await self._take_cut(message)
+                    await self._take_worker_text(message)
                     continue
                 raise RuntimeError("akapulu avatar audio socket received playback bytes")
         except asyncio.CancelledError:
