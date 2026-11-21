@@ -24,7 +24,8 @@ def test_join_url_and_names():
 
     example = _load()
     assert example.USER_NAME == "You"
-    assert example.AVATAR_NAME == "Avatar"
+    assert example.DAILY_AVATAR_USER_NAME == "Avatar"
+    assert example.DAILY_BROWSER_USER_NAME == "You"
     assert example.SHOW_AI_LABEL is False
     uuid.UUID(example.AVATAR_ID)
     assert not hasattr(example, "api_origin")
@@ -57,10 +58,11 @@ def test_example_uses_attach_and_daily_params():
     text = (Path(__file__).resolve().parents[1] / "examples" / "foundational.py").read_text()
     assert "akapulu_daily_params" in text
     assert "avatar.attach(transport)" in text
+    assert "avatar_video" not in text
     assert "avatar_microphone_off" not in text
     assert "NoteAvatarVideo" not in text
-    assert "capture_participant_video" not in text
-    assert example.AVATAR_NAME == "Avatar"
+    assert "wait_until_call_ready" in text
+    assert example.DAILY_AVATAR_USER_NAME == "Avatar"
 
 
 def test_spoken_language_locks_and_rejects_a_missing_language():

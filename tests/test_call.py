@@ -8,7 +8,12 @@ import uuid
 import aiohttp
 from aiohttp import web
 
-from pipecat_akapulu.call import AVATAR_NAME, BROWSER_NAME, ROOM_TTL_SECS, create_akapulu_call
+from pipecat_akapulu.call import (
+    DAILY_AVATAR_USER_NAME,
+    DAILY_BROWSER_USER_NAME,
+    ROOM_TTL_SECS,
+    create_akapulu_call,
+)
 
 AVATAR_ID = "22222222-2222-2222-2222-222222222222"
 SESSION_ID = "11111111-1111-1111-1111-111111111111"
@@ -44,9 +49,9 @@ async def _tokens(request: web.Request) -> web.Response:
     permissions = props.get("permissions") or {}
     if permissions.get("hasPresence") is False:
         token = "bot-token"
-    elif props.get("user_name") == BROWSER_NAME:
+    elif props.get("user_name") == DAILY_BROWSER_USER_NAME:
         token = "browser-token"
-    elif props.get("user_name") == AVATAR_NAME:
+    elif props.get("user_name") == DAILY_AVATAR_USER_NAME:
         token = "avatar-token"
     else:
         raise web.HTTPBadRequest(text="unknown token")
@@ -171,9 +176,9 @@ async def test_creates_the_room_and_posts_the_session() -> None:
         raise RuntimeError("bot token could share a screen")
     if bot["permissions"] != {"hasPresence": False}:
         raise RuntimeError("bot token was visible in Daily Prebuilt")
-    if by_name[BROWSER_NAME]["is_owner"] is not False or by_name[BROWSER_NAME]["user_name"] != "You":
+    if by_name[DAILY_BROWSER_USER_NAME]["is_owner"] is not False or by_name[DAILY_BROWSER_USER_NAME]["user_name"] != "You":
         raise RuntimeError("browser token was not named You")
-    avatar = by_name[AVATAR_NAME]
+    avatar = by_name[DAILY_AVATAR_USER_NAME]
     if avatar["user_name"] != "Avatar" or avatar["is_owner"] is not False:
         raise RuntimeError("worker token was not named Avatar")
     if avatar["enable_screenshare"] is not False or avatar["start_audio_off"] is not False:

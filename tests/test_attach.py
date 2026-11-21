@@ -2,30 +2,35 @@
 
 import asyncio
 
-from pipecat.frames.frames import UserImageRawFrame
-from pipecat.processors.frame_processor import FrameDirection
 from pipecat.utils.base_object import BaseObject
 
 from pipecat_akapulu import AkapuluAvatar, akapulu_daily_params
-from pipecat_akapulu.avatar import _AvatarVideoIn
 
 
 SESSION = "11111111-1111-1111-1111-111111111111"
+
+
+class _FakeClient:
+    def __init__(self):
+        self.captured = []
+
+    async def capture_participant_video(
+        self, participant_id, callback, framerate=None, video_source="camera", color_format="RGB"
+    ):
+        self.captured.append((participant_id, callback, framerate, video_source, color_format))
+        await callback(participant_id, object(), video_source)
 
 
 class _FakeTransport(BaseObject):
     def __init__(self):
         super().__init__()
         self._register_event_handler("on_participant_joined", sync=True)
+        self._client = _FakeClient()
         self.subscriptions = []
-        self.captured = []
 
     async def update_subscriptions(self, *, participant_settings):
         self.subscriptions.append(participant_settings)
         return None
-
-    async def capture_participant_video(self, participant_id, framerate=None):
-        self.captured.append((participant_id, framerate))
 
 
 def test_akapulu_daily_params():
@@ -42,8 +47,7 @@ def test_akapulu_daily_params():
 def test_attach_wires_avatar_only():
     transport = _FakeTransport()
     tap = AkapuluAvatar(session_id=SESSION)
-    video_in = tap.attach(transport)
-    assert isinstance(video_in, _AvatarVideoIn)
+    assert tap.attach(transport) is None
     try:
         tap.attach(transport)
     except RuntimeError as exc:
@@ -57,7 +61,7 @@ def test_attach_wires_avatar_only():
             {"id": "browser", "info": {"userName": "You"}},
         )
         assert transport.subscriptions == []
-        assert transport.captured == []
+        assert transport._client.captured == []
         await transport._call_event_handler(
             "on_participant_joined",
             {"id": "avatar", "info": {"userName": "Avatar"}},
@@ -65,11 +69,8 @@ def test_attach_wires_avatar_only():
         assert transport.subscriptions == [
             {"avatar": {"media": {"microphone": "unsubscribed"}}}
         ]
-        assert transport.captured == [("avatar", None)]
-        await video_in.process_frame(
-            UserImageRawFrame(user_id="avatar", image=b"x", size=(1, 1), format="RGB"),
-            FrameDirection.DOWNSTREAM,
-        )
+        assert len(transport._client.captured) == 1
+        assert transport._client.captured[0][0] == "avatar"
         assert tap._video_frames == 1
 
     asyncio.run(run())
