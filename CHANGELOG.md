@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.17] - 2026-11-21
+
+- When `call_is_ready` unlocks after decoded Avatar video frames, send
+  `{"type":"call_ready"}` on the private audio socket so the worker can stamp
+  Django `call_is_ready_at` (User Report cold start / status ready).
+
 ## [0.1.16] - 2026-11-20
 
 - `call_is_ready` is owned by `AkapuluAvatar`: `note_avatar_video_frame()` after Daily

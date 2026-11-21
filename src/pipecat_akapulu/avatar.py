@@ -27,9 +27,11 @@ updates for the whole boot.
 camera frames in the voice bot (Daily ``capture_participant_video``) and
 call ``note_avatar_video_frame`` for each one. After
 ``_READY_VIDEO_FRAMES`` decoded frames, this tap emits the RTVI status with
-``call_is_ready`` true. Worker and Django poll status that claim ready are
-forced false until then. Assistant PCM stays locked until that gate opens.
-Audio that arrives before the worker audio socket exists is queued.
+``call_is_ready`` true and sends ``{"type":"call_ready"}`` on the private
+audio socket so the worker can stamp Django ``call_is_ready_at``. Worker
+status that claims ready is forced false until then. Assistant PCM stays
+locked until that gate opens. Audio that arrives before the worker audio
+socket exists is queued.
 
 The session socket stays open for the life of the call. The first message
 is 24000 and the session id. The worker answers with the private audio
@@ -40,6 +42,7 @@ Ingest audio, bot to worker:
   A + uint32 ingest sequence + pcm
 Speaking text on the audio socket:
   {"type":"speaking","who":"bot"|"user","state":"started"|"stopped"|"interrupted"}
+  {"type":"call_ready"} after this tap has decoded enough Avatar video frames
 Worker replies with ``{"type":"idle"}`` after the last live speech PCM has
 been published into Daily. That ack is what emits ``BotStoppedSpeakingFrame``.
 TTS stop alone is not enough: the worker still has audio to publish.
@@ -212,7 +215,8 @@ class AkapuluAvatar(FrameProcessor):
         The voice bot must capture Avatar video (Daily
         ``capture_participant_video``) and call this for each frame. After
         ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with call_is_ready
-        true and unlock assistant PCM.
+        true, tell the worker ``call_ready`` on the audio socket, and unlock
+        assistant PCM.
         """
         if self._closed or self._ready_emitted:
             return
@@ -238,6 +242,7 @@ class AkapuluAvatar(FrameProcessor):
                 "completion_percent": 100,
             }
         )
+        await self._send_or_queue(json.dumps({"type": "call_ready"}))
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)

@@ -1179,6 +1179,12 @@ async def main() -> None:
 
 async def test_video_frames_emit_call_is_ready() -> None:
     tap = _tap()
+    sent = []
+
+    async def _capture(message):
+        sent.append(message)
+
+    tap._send_or_queue = _capture
     for _ in range(4):
         await tap.note_avatar_video_frame()
         if tap.call_is_ready:
@@ -1186,6 +1192,8 @@ async def test_video_frames_emit_call_is_ready() -> None:
     await tap.note_avatar_video_frame()
     if not tap.call_is_ready:
         raise RuntimeError("call_is_ready was not set after video frames")
+    if sent != ['{"type": "call_ready"}']:
+        raise RuntimeError(f"call_ready wire was {sent}")
     if not tap._queued_status:
         raise RuntimeError("ready status was not queued")
     body = tap._queued_status[-1].data
@@ -1197,6 +1205,11 @@ async def test_video_frames_emit_call_is_ready() -> None:
 
 async def test_worker_status_ready_stays_false_until_video() -> None:
     tap = _tap()
+
+    async def _noop(_message):
+        return None
+
+    tap._send_or_queue = _noop
     await tap._emit_status(
         {
             "type": "status",
