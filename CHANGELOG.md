@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.16] - 2026-11-20
+
+- `call_is_ready` is owned by `AkapuluAvatar`: `note_avatar_video_frame()` after Daily
+  `capture_participant_video`, then emit RTVI ready. Worker and Django poll ready are forced
+  false until that gate. Assistant PCM stays locked until then.
+- `BotStoppedSpeakingFrame` waits for the worker `{"type":"idle"}` ack after the last live
+  speech PCM is published into Daily. TTS stop alone is not enough.
+- `examples/foundational.py` starts Flux and Sonic in English. A later committed turn in another language switches both.
+- `examples/foundational.py` turns off the Avatar microphone when that participant joins. The browser stays subscribed to it.
+
 ## [0.1.15] - 2026-11-09
 
 - README matches the Pipecat service page. The worker publishes avatar video and audio. The voice bot has no Daily tile. The worker can take 5 to 10 seconds to start. Rendering starts after about 800 ms of assistant audio, and the render itself takes about 150 ms.
@@ -12,15 +22,6 @@
 
 - `examples/foundational.py` defaults to Hollis and the male Cartesia Sonic voice.
 - README matches that example default (PyPI description was still on Clara from 0.1.12).
-
-## [Unreleased]
-
-- `call_is_ready` is owned by `AkapuluAvatar`: `note_avatar_video_frame()` after Daily
-  `capture_participant_video`, then emit RTVI ready. Worker/Django poll ready is forced
-  false until that gate. Assistant PCM stays locked until then.
-
-- `examples/foundational.py` starts Flux and Sonic in English. A later committed turn in another language switches both.
-- `examples/foundational.py` turns off the Avatar microphone when that participant joins. The browser stays subscribed to it.
 
 ## [0.1.12] - 2026-10-28
 

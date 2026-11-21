@@ -349,6 +349,71 @@ async def test_tail_normal_close_is_not_an_error() -> None:
         raise RuntimeError(f"tail stopped send was {stopped}")
 
 
+async def test_tail_waits_for_idle_before_bot_stopped() -> None:
+    from pipecat.frames.frames import BotStoppedSpeakingFrame
+
+    tap = _tap("wss://example.invalid/live")
+    tap._audio = _Audio()
+    tap._accept_audio = True
+    tap._in_bot_turn = True
+    tap._turn = 1
+    tap._tail_secs = 0
+    pushed = []
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        pushed.append((frame, direction))
+
+    tap.push_frame = push
+
+    async def ack() -> None:
+        for _ in range(50):
+            if tap._idle_event is not None:
+                tap._idle_event.set()
+                return
+            await asyncio.sleep(0.01)
+        raise RuntimeError("idle event was never armed")
+
+    task = asyncio.create_task(ack())
+    await tap._lock_after_tail()
+    await task
+    stopped = [
+        frame for frame, _direction in pushed if isinstance(frame, BotStoppedSpeakingFrame)
+    ]
+    if len(stopped) != 2:
+        raise RuntimeError(f"BotStoppedSpeakingFrame count={len(stopped)} pushed={pushed!r}")
+    speaking = [
+        message
+        for message in tap._audio.sent
+        if isinstance(message, str) and '"stopped"' in message
+    ]
+    if len(speaking) != 1:
+        raise RuntimeError(f"speaking stopped was {speaking}")
+
+
+async def test_tts_stopped_does_not_emit_bot_stopped() -> None:
+    from pipecat.frames.frames import BotStoppedSpeakingFrame
+
+    tap = _tap("wss://example.invalid/live")
+    _mark_subscriber_ready(tap)
+    pushed = []
+
+    async def push(frame, direction=FrameDirection.DOWNSTREAM):
+        pushed.append(frame)
+
+    tap.push_frame = push
+    tap._audio = _Audio()
+    await _push_audio(tap, _pcm(1000))
+
+    def create_task(coroutine, name=None):
+        coroutine.close()
+        return asyncio.get_running_loop().create_task(asyncio.sleep(0))
+
+    tap.create_task = create_task
+    await tap.process_frame(TTSStoppedFrame(), FrameDirection.DOWNSTREAM)
+    if any(isinstance(frame, BotStoppedSpeakingFrame) for frame in pushed):
+        raise RuntimeError("TTSStopped emitted BotStoppedSpeakingFrame")
+
+
 async def test_tail_unexpected_close_still_raises() -> None:
     from websockets.exceptions import ConnectionClosedError
 
