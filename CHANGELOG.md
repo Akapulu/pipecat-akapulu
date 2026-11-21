@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.18] - 2026-11-21
+
+- `AkapuluAvatar.attach(transport)` unsubscribes the voice bot from the Avatar
+  microphone, starts Avatar video capture, and returns a processor for
+  `transport.input()` so `call_is_ready` no longer needs bot-local wiring.
+- `akapulu_daily_params()` returns DailyParams with audio/video out off and
+  video in on. STT mute stays optional and outside this package.
+
 ## [0.1.17] - 2026-11-21
 
 - When `call_is_ready` unlocks after decoded Avatar video frames, send
