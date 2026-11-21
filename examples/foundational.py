@@ -5,10 +5,10 @@ mints the browser, voice-bot, and Akapulu Labs worker tokens, and POSTs
 /api/live-sessions/ on the Akapulu Labs API. It prints a join URL. Open
 that URL. Use akapulu_daily_params so the voice bot does not publish audio
 or video. Call avatar.attach(transport) so the package unsubscribes the
-voice bot from the Avatar microphone, captures Avatar video, and unlocks
-call_is_ready. The voice-bot token has no Daily presence, so the page
-shows you and the avatar. The Akapulu Labs worker publishes the face and
-the played audio.
+voice bot from the Avatar microphone and captures Avatar video for
+call_is_ready. Await wait_until_call_ready before greeting. The voice-bot
+token has no Daily presence, so the page shows you and the avatar. The
+Akapulu Labs worker publishes the face and the played audio.
 
 Avatar and This is AI are fixed for this example. The API origin is the
 plugin origin. Deepgram Flux hears the caller. gpt-5.4-mini speaks. Cartesia
@@ -43,8 +43,8 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.daily.transport import DailyTransport
 from pipecat.workers.runner import WorkerRunner
 from pipecat_akapulu import (
-    AVATAR_NAME,
-    BROWSER_NAME,
+    DAILY_AVATAR_USER_NAME,
+    DAILY_BROWSER_USER_NAME,
     AkapuluAvatar,
     akapulu_daily_params,
     create_akapulu_call,
@@ -74,7 +74,7 @@ FLUX_LANGUAGES = frozenset(
 )
 SETUP_TIMEOUT_SECS = 180.0
 USER_JOIN_TIMEOUT_SECS = 180.0
-USER_NAME = BROWSER_NAME
+USER_NAME = DAILY_BROWSER_USER_NAME
 # Hollis (public catalog). This is AI off.
 AVATAR_ID = "1285bfe4-3512-4b34-93ad-196098597a1c"
 SHOW_AI_LABEL = False
@@ -206,7 +206,7 @@ async def run_bot() -> None:
         ),
     )
     avatar = AkapuluAvatar(session_id=session_id)
-    avatar_video = avatar.attach(transport)
+    avatar.attach(transport)
     context = LLMContext(
         [{"role": "developer", "content": "Greet the user and ask how you can help."}]
     )
@@ -214,7 +214,6 @@ async def run_bot() -> None:
     pipeline = Pipeline(
         [
             transport.input(),
-            avatar_video,
             stt,
             spoken_language,
             user_aggregator,
@@ -255,7 +254,7 @@ async def run_bot() -> None:
             return
         name = _daily_user_name(participant)
         logger.info("Daily participant joined {}", name)
-        if name == AVATAR_NAME:
+        if name == DAILY_AVATAR_USER_NAME:
             return
         if name != USER_NAME:
             raise RuntimeError(f"Daily participant {name} is not the browser or the avatar")

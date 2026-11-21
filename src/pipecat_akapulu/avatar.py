@@ -25,14 +25,14 @@ updates for the whole boot.
 
 ``call_is_ready`` is owned by this tap, not the worker. Call
 ``attach(transport)`` after building the Daily transport: that unsubscribes
-the voice bot from the Avatar microphone, captures Avatar camera frames, and
-returns a processor to put after ``transport.input()``. After
-``_READY_VIDEO_FRAMES`` decoded frames, this tap emits the RTVI status with
-``call_is_ready`` true and sends ``{"type":"call_ready"}`` on the private
-audio socket so the worker can stamp Django ``call_is_ready_at``. Worker
-status that claims ready is forced false until then. Assistant PCM stays
-locked until that gate opens. Audio that arrives before the worker audio
-socket exists is queued.
+the voice bot from the Avatar microphone and captures Avatar camera frames
+on a side path (not through the voice pipeline). After
+``_READY_VIDEO_FRAMES`` decoded Avatar frames, this tap emits the RTVI
+status with ``call_is_ready`` true and sends ``{"type":"call_ready"}`` on the
+private audio socket so the worker can stamp Django ``call_is_ready_at``.
+Worker status that claims ready is forced false until then. Assistant PCM
+stays locked until that gate opens. Await ``wait_until_call_ready`` before
+greeting. Audio that arrives before the worker audio socket exists is queued.
 
 The session socket stays open for the life of the call. The first message
 is 24000 and the session id. The worker answers with the private audio
@@ -76,16 +76,14 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
     StartFrame,
     TTSStoppedFrame,
-    UserImageRawFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
 )
 
 CHANNELS = 1
 _WIRE_RATE = 24000
-# Avatar camera frames this tap must see before call_is_ready (and before
-# assistant PCM unlocks). First idle frame plus a short buffer so the
-# subscriber path is warm before the frontend drops the spinner / greets.
+# Decoded Avatar camera frames (Daily participant DAILY_AVATAR_USER_NAME)
+# this tap must see before call_is_ready and before assistant PCM unlocks.
 _READY_VIDEO_FRAMES = 5
 _PROD_DJANGO_ORIGIN = "https://akapulu.com"
 
@@ -111,25 +109,6 @@ _SPEAKING = {
     UserStartedSpeakingFrame: ("user", "started"),
     UserStoppedSpeakingFrame: ("user", "stopped"),
 }
-
-
-class _AvatarVideoIn(FrameProcessor):
-    """Count Avatar Daily camera frames into ``AkapuluAvatar`` for call_is_ready."""
-
-    def __init__(self, avatar: "AkapuluAvatar", avatar_participant_ids: set[str]):
-        super().__init__()
-        if not isinstance(avatar, AkapuluAvatar):
-            raise RuntimeError("akapulu avatar tap is missing")
-        self._avatar = avatar
-        self._avatar_ids = avatar_participant_ids
-
-    async def process_frame(self, frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, UserImageRawFrame):
-            if frame.user_id in self._avatar_ids:
-                await self._avatar.note_avatar_video_frame()
-            return
-        await self.push_frame(frame, direction)
 
 
 class AkapuluAvatar(FrameProcessor):
@@ -206,14 +185,14 @@ class AkapuluAvatar(FrameProcessor):
         self._resampler = None
         self._attached = False
 
-    def attach(self, transport) -> FrameProcessor:
+    def attach(self, transport) -> None:
         """Wire Daily Avatar mic unsubscribe + video capture for call_is_ready.
 
         Registers an ``on_participant_joined`` handler that, for the Avatar
-        participant only, unsubscribes this voice bot from that microphone
-        (browser stays subscribed) and starts ``capture_participant_video``.
-        Returns a processor to place immediately after ``transport.input()``.
-        Call once per tap. Does not mute STT.
+        Daily participant only, unsubscribes this voice bot from that
+        microphone (browser stays subscribed) and captures Avatar camera
+        frames on the Daily client side path into this tap. Does not add a
+        second pipeline processor. Does not mute STT. Call once per tap.
         """
         if self._attached:
             raise RuntimeError("akapulu avatar already attached to a transport")
@@ -223,15 +202,12 @@ class AkapuluAvatar(FrameProcessor):
             raise RuntimeError("akapulu avatar attach transport has no event_handler")
         if not hasattr(transport, "update_subscriptions"):
             raise RuntimeError("akapulu avatar attach transport has no update_subscriptions")
-        if not hasattr(transport, "capture_participant_video"):
-            raise RuntimeError(
-                "akapulu avatar attach transport has no capture_participant_video"
-            )
+        client = getattr(transport, "_client", None)
+        if client is None or not hasattr(client, "capture_participant_video"):
+            raise RuntimeError("akapulu avatar attach transport has no Daily client")
         # Import here: call.py imports helpers from this module at load time.
-        from pipecat_akapulu.call import AVATAR_NAME
+        from pipecat_akapulu.call import DAILY_AVATAR_USER_NAME
 
-        avatar_ids: set[str] = set()
-        video_in = _AvatarVideoIn(self, avatar_ids)
         self._attached = True
 
         @transport.event_handler("on_participant_joined")
@@ -246,12 +222,11 @@ class AkapuluAvatar(FrameProcessor):
             name = info.get("userName")
             if not isinstance(name, str) or not name:
                 raise RuntimeError("Daily participant has no userName")
-            if name != AVATAR_NAME:
+            if name != DAILY_AVATAR_USER_NAME:
                 return
             participant_id = participant.get("id")
             if not isinstance(participant_id, str) or not participant_id:
                 raise RuntimeError("Daily avatar participant has no id")
-            avatar_ids.add(participant_id)
             error = await transport.update_subscriptions(
                 participant_settings={
                     participant_id: {"media": {"microphone": "unsubscribed"}},
@@ -259,9 +234,17 @@ class AkapuluAvatar(FrameProcessor):
             )
             if error:
                 raise RuntimeError(f"Daily avatar microphone unsubscribe failed: {error}")
-            await transport.capture_participant_video(participant_id, framerate=None)
 
-        return video_in
+            async def on_avatar_video_frame(_participant_id, _video_frame, _video_source):
+                await self.note_avatar_video_frame()
+
+            await client.capture_participant_video(
+                participant_id,
+                on_avatar_video_frame,
+                None,
+                "camera",
+                "RGB",
+            )
 
     async def setup(self, setup: FrameProcessorSetup):
         await super().setup(setup)
@@ -291,10 +274,10 @@ class AkapuluAvatar(FrameProcessor):
     async def note_avatar_video_frame(self) -> None:
         """Count one decoded Avatar camera frame toward call_is_ready.
 
-        Prefer ``attach(transport)``, which captures Avatar video and calls
-        this. After ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with
-        call_is_ready true, tell the worker ``call_ready`` on the audio
-        socket, and unlock assistant PCM.
+        ``attach(transport)`` captures Avatar video and calls this. After
+        ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with call_is_ready
+        true, tell the worker ``call_ready`` on the audio socket, and unlock
+        assistant PCM.
         """
         if self._closed or self._ready_emitted:
             return

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.19] - 2026-11-21
+
+- `attach(transport)` captures Avatar video on the Daily client side path into
+  the same `AkapuluAvatar` tap. No second pipeline processor. Await
+  `wait_until_call_ready` before greeting.
+- Rename Daily participant constants to `DAILY_AVATAR_USER_NAME` and
+  `DAILY_BROWSER_USER_NAME`.
+
 ## [0.1.18] - 2026-11-21
 
 - `AkapuluAvatar.attach(transport)` unsubscribes the voice bot from the Avatar

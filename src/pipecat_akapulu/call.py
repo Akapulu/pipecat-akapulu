@@ -29,8 +29,10 @@ from pipecat.transports.daily.utils import (
 
 from pipecat_akapulu.avatar import _django_origin
 
-BROWSER_NAME = "You"
-AVATAR_NAME = "Avatar"
+# Daily meeting-token userName for the browser participant.
+DAILY_BROWSER_USER_NAME = "You"
+# Daily meeting-token userName for the Akapulu Labs worker participant.
+DAILY_AVATAR_USER_NAME = "Avatar"
 _DAILY_API = "https://api.daily.co/v1"
 ROOM_TTL_SECS = 2 * 60 * 60
 
@@ -152,7 +154,9 @@ async def create_akapulu_call(
         rest,
         room_url,
         owner=False,
-        properties=DailyMeetingTokenProperties(is_owner=False, user_name=BROWSER_NAME),
+        properties=DailyMeetingTokenProperties(
+            is_owner=False, user_name=DAILY_BROWSER_USER_NAME
+        ),
         room_exp_secs=exp_secs,
     )
     avatar_token = await _token(
@@ -161,7 +165,7 @@ async def create_akapulu_call(
         owner=False,
         properties=DailyMeetingTokenProperties(
             is_owner=False,
-            user_name=AVATAR_NAME,
+            user_name=DAILY_AVATAR_USER_NAME,
             enable_screenshare=False,
             start_video_off=False,
             start_audio_off=False,
