@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.17] - 2026-11-21
+
+- When `call_is_ready` unlocks after decoded Avatar video frames, POST
+  `{"column": "call_is_ready_at"}` to `POST /api/live-sessions/<id>/status/` so
+  Django status and User Report cold start use the tap gate (not GPU idle-25).
+
 ## [0.1.16] - 2026-11-20
 
 - `call_is_ready` is owned by `AkapuluAvatar`: `note_avatar_video_frame()` after Daily
