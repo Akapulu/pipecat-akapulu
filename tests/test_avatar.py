@@ -1186,10 +1186,10 @@ async def test_video_frames_emit_call_is_ready() -> None:
 
     tap._send_or_queue = _capture
     for _ in range(4):
-        await tap.note_avatar_video_frame()
+        await tap._note_avatar_video_frame()
         if tap.call_is_ready:
             raise RuntimeError("call_is_ready before the buffer filled")
-    await tap.note_avatar_video_frame()
+    await tap._note_avatar_video_frame()
     if not tap.call_is_ready:
         raise RuntimeError("call_is_ready was not set after video frames")
     if sent != ['{"type": "call_ready"}']:
@@ -1220,11 +1220,11 @@ async def test_worker_status_ready_stays_false_until_video() -> None:
     )
     if tap._queued_status[-1].data["call_is_ready"] is not False:
         raise RuntimeError("worker ready leaked before video frames")
-    await tap.note_avatar_video_frame()
-    await tap.note_avatar_video_frame()
-    await tap.note_avatar_video_frame()
-    await tap.note_avatar_video_frame()
-    await tap.note_avatar_video_frame()
+    await tap._note_avatar_video_frame()
+    await tap._note_avatar_video_frame()
+    await tap._note_avatar_video_frame()
+    await tap._note_avatar_video_frame()
+    await tap._note_avatar_video_frame()
     await tap._emit_status(
         {
             "type": "status",

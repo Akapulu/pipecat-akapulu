@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.20] - 2026-11-21
+
+- Rename `note_avatar_video_frame` to `_note_avatar_video_frame` (attach-only).
+
 ## [0.1.19] - 2026-11-21
 
 - `attach(transport)` captures Avatar video on the Daily client side path into
