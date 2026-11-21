@@ -2,9 +2,9 @@
 
 ## [0.1.17] - 2026-11-21
 
-- When `call_is_ready` unlocks after decoded Avatar video frames, POST
-  `{"column": "call_is_ready_at"}` to `POST /api/live-sessions/<id>/status/` so
-  Django status and User Report cold start use the tap gate (not GPU idle-25).
+- When `call_is_ready` unlocks after decoded Avatar video frames, send
+  `{"type":"call_ready"}` on the private audio socket so the worker can stamp
+  Django `call_is_ready_at` (User Report cold start / status ready).
 
 ## [0.1.16] - 2026-11-20
 

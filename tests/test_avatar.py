@@ -1140,52 +1140,6 @@ def test_engine_joined_post() -> None:
         thread.join(timeout=5)
 
 
-def test_call_ready_post() -> None:
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length)
-            self.server.seen.append((self.path, body))
-            code = self.server.status_code
-            self.send_response(code)
-            self.end_headers()
-            if code != 200:
-                self.wfile.write(b"nope")
-
-        def log_message(self, _format, *_args):
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    server.seen = []
-    server.status_code = 200
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    host, port = server.server_address
-    saved = _with_origin_env(f"http://{host}:{port}")
-    try:
-        tap = AkapuluAvatar(session_id=SESSION)
-        tap._post_call_ready()
-        expected = (
-            f"/api/live-sessions/{SESSION}/status/",
-            b'{"column": "call_is_ready_at"}',
-        )
-        if server.seen != [expected]:
-            raise RuntimeError(f"call_is_ready stamp was {server.seen}")
-        server.status_code = 500
-        server.seen.clear()
-        try:
-            tap._post_call_ready()
-        except RuntimeError as exc:
-            if "500" not in str(exc):
-                raise
-        else:
-            raise RuntimeError("call_is_ready stamp 500 was accepted")
-    finally:
-        _restore_origin_env(*saved)
-        server.shutdown()
-        thread.join(timeout=5)
-
-
 async def main() -> None:
     test_constructor_requires_session()
     test_debug_path_must_be_a_fresh_directory()
@@ -1198,7 +1152,6 @@ async def main() -> None:
     await test_cleanup_closes()
     test_django_origin()
     test_engine_joined_post()
-    test_call_ready_post()
     test_poll_does_not_rewind_socket_status()
     await test_poll_status_before_the_url()
     await test_poll_continues_after_the_url()
@@ -1226,12 +1179,12 @@ async def main() -> None:
 
 async def test_video_frames_emit_call_is_ready() -> None:
     tap = _tap()
-    posted = []
+    sent = []
 
-    def _stamp():
-        posted.append(True)
+    async def _capture(message):
+        sent.append(message)
 
-    tap._post_call_ready = _stamp
+    tap._send_or_queue = _capture
     for _ in range(4):
         await tap.note_avatar_video_frame()
         if tap.call_is_ready:
@@ -1239,8 +1192,8 @@ async def test_video_frames_emit_call_is_ready() -> None:
     await tap.note_avatar_video_frame()
     if not tap.call_is_ready:
         raise RuntimeError("call_is_ready was not set after video frames")
-    if not posted:
-        raise RuntimeError("call_is_ready_at was not stamped")
+    if sent != ['{"type": "call_ready"}']:
+        raise RuntimeError(f"call_ready wire was {sent}")
     if not tap._queued_status:
         raise RuntimeError("ready status was not queued")
     body = tap._queued_status[-1].data
@@ -1252,7 +1205,11 @@ async def test_video_frames_emit_call_is_ready() -> None:
 
 async def test_worker_status_ready_stays_false_until_video() -> None:
     tap = _tap()
-    tap._post_call_ready = lambda: None
+
+    async def _noop(_message):
+        return None
+
+    tap._send_or_queue = _noop
     await tap._emit_status(
         {
             "type": "status",

@@ -27,8 +27,8 @@ updates for the whole boot.
 camera frames in the voice bot (Daily ``capture_participant_video``) and
 call ``note_avatar_video_frame`` for each one. After
 ``_READY_VIDEO_FRAMES`` decoded frames, this tap emits the RTVI status with
-``call_is_ready`` true and POSTs ``{"column": "call_is_ready_at"}`` to the
-live-session status route (Django ready + User Report cold start). Worker
+``call_is_ready`` true and sends ``{"type":"call_ready"}`` on the private
+audio socket so the worker can stamp Django ``call_is_ready_at``. Worker
 status that claims ready is forced false until then. Assistant PCM stays
 locked until that gate opens. Audio that arrives before the worker audio
 socket exists is queued.
@@ -42,6 +42,7 @@ Ingest audio, bot to worker:
   A + uint32 ingest sequence + pcm
 Speaking text on the audio socket:
   {"type":"speaking","who":"bot"|"user","state":"started"|"stopped"|"interrupted"}
+  {"type":"call_ready"} after this tap has decoded enough Avatar video frames
 Worker replies with ``{"type":"idle"}`` after the last live speech PCM has
 been published into Daily. That ack is what emits ``BotStoppedSpeakingFrame``.
 TTS stop alone is not enough: the worker still has audio to publish.
@@ -214,7 +215,8 @@ class AkapuluAvatar(FrameProcessor):
         The voice bot must capture Avatar video (Daily
         ``capture_participant_video``) and call this for each frame. After
         ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with call_is_ready
-        true, stamp Django ``call_is_ready_at``, and unlock assistant PCM.
+        true, tell the worker ``call_ready`` on the audio socket, and unlock
+        assistant PCM.
         """
         if self._closed or self._ready_emitted:
             return
@@ -240,7 +242,7 @@ class AkapuluAvatar(FrameProcessor):
                 "completion_percent": 100,
             }
         )
-        await asyncio.to_thread(self._post_call_ready)
+        await self._send_or_queue(json.dumps({"type": "call_ready"}))
 
     async def process_frame(self, frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -369,22 +371,6 @@ class AkapuluAvatar(FrameProcessor):
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"engine joined returned {exc.code} {body}") from exc
-
-    def _post_call_ready(self) -> None:
-        body = json.dumps({"column": "call_is_ready_at"}).encode("utf-8")
-        request = urllib.request.Request(
-            self._status_url(),
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                if response.status != 200:
-                    raise RuntimeError(f"call_is_ready stamp returned {response.status}")
-        except urllib.error.HTTPError as exc:
-            err = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"call_is_ready stamp returned {exc.code} {err}") from exc
 
     def _fetch_worker_poll(self) -> dict:
         request = urllib.request.Request(self._status_url(), method="GET")
