@@ -3,9 +3,10 @@
 This file calls create_akapulu_call, which creates a private Daily room,
 mints the browser, voice-bot, and Akapulu Labs worker tokens, and POSTs
 /api/live-sessions/ on the Akapulu Labs API. It prints a join URL. Open
-that URL. Audio out and video out stay off. When the participant named
-Avatar joins, this bot turns that microphone off. The browser stays
-subscribed to it. The voice-bot token has no Daily presence, so the page
+that URL. Use akapulu_daily_params so the voice bot does not publish audio
+or video. Call avatar.attach(transport) so the package unsubscribes the
+voice bot from the Avatar microphone, captures Avatar video, and unlocks
+call_is_ready. The voice-bot token has no Daily presence, so the page
 shows you and the avatar. The Akapulu Labs worker publishes the face and
 the played audio.
 
@@ -25,7 +26,6 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.frames.frames import (
     LLMRunFrame,
-    UserImageRawFrame,
     STTUpdateSettingsFrame,
     TranscriptionFrame,
     TTSUpdateSettingsFrame,
@@ -40,9 +40,15 @@ from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transcriptions.language import Language
-from pipecat.transports.daily.transport import DailyParams, DailyTransport
+from pipecat.transports.daily.transport import DailyTransport
 from pipecat.workers.runner import WorkerRunner
-from pipecat_akapulu import AVATAR_NAME, BROWSER_NAME, AkapuluAvatar, create_akapulu_call
+from pipecat_akapulu import (
+    AVATAR_NAME,
+    BROWSER_NAME,
+    AkapuluAvatar,
+    akapulu_daily_params,
+    create_akapulu_call,
+)
 
 SAMPLE_RATE = 24000
 SPEAKER_MODEL = "gpt-5.4-mini"
@@ -99,34 +105,6 @@ def _daily_user_name(participant: dict) -> str:
     return name
 
 
-
-
-class NoteAvatarVideo(FrameProcessor):
-    """Count Avatar camera frames into AkapuluAvatar until call_is_ready."""
-
-    def __init__(self, avatar: AkapuluAvatar, avatar_participant_ids: set[str]):
-        super().__init__()
-        if not isinstance(avatar, AkapuluAvatar):
-            raise RuntimeError("avatar tap is missing")
-        self._avatar = avatar
-        self._avatar_ids = avatar_participant_ids
-
-    async def process_frame(self, frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, UserImageRawFrame):
-            if frame.user_id in self._avatar_ids:
-                await self._avatar.note_avatar_video_frame()
-            return
-        await self.push_frame(frame, direction)
-
-def avatar_microphone_off(participant: dict) -> dict | None:
-    """The one Daily subscription change. None for every participant except Avatar."""
-    if _daily_user_name(participant) != AVATAR_NAME:
-        return None
-    participant_id = participant.get("id")
-    if not isinstance(participant_id, str) or not participant_id:
-        raise RuntimeError("Daily participant has no id")
-    return {participant_id: {"media": {"microphone": "unsubscribed"}}}
 
 
 class SpokenLanguage(FrameProcessor):
@@ -188,12 +166,7 @@ async def run_bot() -> None:
         room_url,
         bot_token,
         "Assistant",
-        DailyParams(
-            audio_in_enabled=True,
-            audio_out_enabled=False,
-            video_in_enabled=True,
-            video_out_enabled=False,
-        ),
+        akapulu_daily_params(audio_in_user_tracks=True),
     )
     stt = DeepgramFluxSTTService(
         api_key=_required("DEEPGRAM_API_KEY"),
@@ -233,6 +206,7 @@ async def run_bot() -> None:
         ),
     )
     avatar = AkapuluAvatar(session_id=session_id)
+    avatar_video = avatar.attach(transport)
     context = LLMContext(
         [{"role": "developer", "content": "Greet the user and ask how you can help."}]
     )
@@ -240,6 +214,7 @@ async def run_bot() -> None:
     pipeline = Pipeline(
         [
             transport.input(),
+            avatar_video,
             stt,
             spoken_language,
             user_aggregator,
@@ -280,16 +255,7 @@ async def run_bot() -> None:
             return
         name = _daily_user_name(participant)
         logger.info("Daily participant joined {}", name)
-        settings = avatar_microphone_off(participant)
-        if settings is not None:
-            participant_id = participant.get("id")
-            if not isinstance(participant_id, str) or not participant_id:
-                raise RuntimeError("Daily avatar participant has no id")
-            avatar_participant_ids.add(participant_id)
-            error = await transport.update_subscriptions(participant_settings=settings)
-            if error:
-                raise RuntimeError(f"Daily avatar microphone unsubscribe failed: {error}")
-            await transport.capture_participant_video(participant_id, framerate=None)
+        if name == AVATAR_NAME:
             return
         if name != USER_NAME:
             raise RuntimeError(f"Daily participant {name} is not the browser or the avatar")

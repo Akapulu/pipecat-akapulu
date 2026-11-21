@@ -23,9 +23,10 @@ pipeline that includes this tap. Loading status is an RTVI server message on
 this same pipe, so holding StartFrame until the GPU joins would hide those
 updates for the whole boot.
 
-``call_is_ready`` is owned by this tap, not the worker. Capture Avatar
-camera frames in the voice bot (Daily ``capture_participant_video``) and
-call ``note_avatar_video_frame`` for each one. After
+``call_is_ready`` is owned by this tap, not the worker. Call
+``attach(transport)`` after building the Daily transport: that unsubscribes
+the voice bot from the Avatar microphone, captures Avatar camera frames, and
+returns a processor to put after ``transport.input()``. After
 ``_READY_VIDEO_FRAMES`` decoded frames, this tap emits the RTVI status with
 ``call_is_ready`` true and sends ``{"type":"call_ready"}`` on the private
 audio socket so the worker can stamp Django ``call_is_ready_at``. Worker
@@ -75,6 +76,7 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
     StartFrame,
     TTSStoppedFrame,
+    UserImageRawFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
 )
@@ -109,6 +111,25 @@ _SPEAKING = {
     UserStartedSpeakingFrame: ("user", "started"),
     UserStoppedSpeakingFrame: ("user", "stopped"),
 }
+
+
+class _AvatarVideoIn(FrameProcessor):
+    """Count Avatar Daily camera frames into ``AkapuluAvatar`` for call_is_ready."""
+
+    def __init__(self, avatar: "AkapuluAvatar", avatar_participant_ids: set[str]):
+        super().__init__()
+        if not isinstance(avatar, AkapuluAvatar):
+            raise RuntimeError("akapulu avatar tap is missing")
+        self._avatar = avatar
+        self._avatar_ids = avatar_participant_ids
+
+    async def process_frame(self, frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, UserImageRawFrame):
+            if frame.user_id in self._avatar_ids:
+                await self._avatar.note_avatar_video_frame()
+            return
+        await self.push_frame(frame, direction)
 
 
 class AkapuluAvatar(FrameProcessor):
@@ -183,6 +204,64 @@ class AkapuluAvatar(FrameProcessor):
         self._sample_rate = _WIRE_RATE
         self._source_rate: int | None = None
         self._resampler = None
+        self._attached = False
+
+    def attach(self, transport) -> FrameProcessor:
+        """Wire Daily Avatar mic unsubscribe + video capture for call_is_ready.
+
+        Registers an ``on_participant_joined`` handler that, for the Avatar
+        participant only, unsubscribes this voice bot from that microphone
+        (browser stays subscribed) and starts ``capture_participant_video``.
+        Returns a processor to place immediately after ``transport.input()``.
+        Call once per tap. Does not mute STT.
+        """
+        if self._attached:
+            raise RuntimeError("akapulu avatar already attached to a transport")
+        if transport is None:
+            raise RuntimeError("akapulu avatar attach transport is missing")
+        if not hasattr(transport, "event_handler"):
+            raise RuntimeError("akapulu avatar attach transport has no event_handler")
+        if not hasattr(transport, "update_subscriptions"):
+            raise RuntimeError("akapulu avatar attach transport has no update_subscriptions")
+        if not hasattr(transport, "capture_participant_video"):
+            raise RuntimeError(
+                "akapulu avatar attach transport has no capture_participant_video"
+            )
+        # Import here: call.py imports helpers from this module at load time.
+        from pipecat_akapulu.call import AVATAR_NAME
+
+        avatar_ids: set[str] = set()
+        video_in = _AvatarVideoIn(self, avatar_ids)
+        self._attached = True
+
+        @transport.event_handler("on_participant_joined")
+        async def on_avatar_participant_joined(_transport, participant):
+            if not isinstance(participant, dict):
+                raise RuntimeError("Daily participant is not an object")
+            info = participant.get("info")
+            if isinstance(info, dict) and info.get("isLocal") is True:
+                return
+            if not isinstance(info, dict):
+                raise RuntimeError("Daily participant has no info")
+            name = info.get("userName")
+            if not isinstance(name, str) or not name:
+                raise RuntimeError("Daily participant has no userName")
+            if name != AVATAR_NAME:
+                return
+            participant_id = participant.get("id")
+            if not isinstance(participant_id, str) or not participant_id:
+                raise RuntimeError("Daily avatar participant has no id")
+            avatar_ids.add(participant_id)
+            error = await transport.update_subscriptions(
+                participant_settings={
+                    participant_id: {"media": {"microphone": "unsubscribed"}},
+                }
+            )
+            if error:
+                raise RuntimeError(f"Daily avatar microphone unsubscribe failed: {error}")
+            await transport.capture_participant_video(participant_id, framerate=None)
+
+        return video_in
 
     async def setup(self, setup: FrameProcessorSetup):
         await super().setup(setup)
@@ -212,11 +291,10 @@ class AkapuluAvatar(FrameProcessor):
     async def note_avatar_video_frame(self) -> None:
         """Count one decoded Avatar camera frame toward call_is_ready.
 
-        The voice bot must capture Avatar video (Daily
-        ``capture_participant_video``) and call this for each frame. After
-        ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with call_is_ready
-        true, tell the worker ``call_ready`` on the audio socket, and unlock
-        assistant PCM.
+        Prefer ``attach(transport)``, which captures Avatar video and calls
+        this. After ``_READY_VIDEO_FRAMES`` frames, emit RTVI status with
+        call_is_ready true, tell the worker ``call_ready`` on the audio
+        socket, and unlock assistant PCM.
         """
         if self._closed or self._ready_emitted:
             return

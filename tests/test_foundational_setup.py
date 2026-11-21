@@ -52,21 +52,15 @@ def test_voice_stack():
     assert example.Language.ZH not in example.FLUX_LANGUAGES
 
 
-def test_avatar_microphone_off():
+def test_example_uses_attach_and_daily_params():
     example = _load()
-    assert example.avatar_microphone_off({"id": "browser", "info": {"userName": "You"}}) is None
-    assert example.avatar_microphone_off(
-        {"id": "local", "info": {"isLocal": True, "userName": "Assistant"}}
-    ) is None
-    assert example.avatar_microphone_off({"id": "avatar", "info": {"userName": "Avatar"}}) == {
-        "avatar": {"media": {"microphone": "unsubscribed"}}
-    }
-    try:
-        example.avatar_microphone_off({"info": {"userName": "Avatar"}})
-    except RuntimeError as exc:
-        assert "id" in str(exc)
-    else:
-        raise AssertionError("avatar without an id was accepted")
+    text = (Path(__file__).resolve().parents[1] / "examples" / "foundational.py").read_text()
+    assert "akapulu_daily_params" in text
+    assert "avatar.attach(transport)" in text
+    assert "avatar_microphone_off" not in text
+    assert "NoteAvatarVideo" not in text
+    assert "capture_participant_video" not in text
+    assert example.AVATAR_NAME == "Avatar"
 
 
 def test_spoken_language_locks_and_rejects_a_missing_language():
@@ -113,6 +107,6 @@ def test_spoken_language_locks_and_rejects_a_missing_language():
 if __name__ == "__main__":
     test_join_url_and_names()
     test_voice_stack()
-    test_avatar_microphone_off()
+    test_example_uses_attach_and_daily_params()
     test_spoken_language_locks_and_rejects_a_missing_language()
     print("ok")
