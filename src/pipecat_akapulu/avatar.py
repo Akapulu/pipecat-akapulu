@@ -236,7 +236,7 @@ class AkapuluAvatar(FrameProcessor):
                 raise RuntimeError(f"Daily avatar microphone unsubscribe failed: {error}")
 
             async def on_avatar_video_frame(_participant_id, _video_frame, _video_source):
-                await self.note_avatar_video_frame()
+                await self._note_avatar_video_frame()
 
             await client.capture_participant_video(
                 participant_id,
@@ -271,7 +271,7 @@ class AkapuluAvatar(FrameProcessor):
                 f"akapulu avatar call_is_ready was not set within {timeout}s"
             ) from exc
 
-    async def note_avatar_video_frame(self) -> None:
+    async def _note_avatar_video_frame(self) -> None:
         """Count one decoded Avatar camera frame toward call_is_ready.
 
         ``attach(transport)`` captures Avatar video and calls this. After
