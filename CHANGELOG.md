@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.21] - 2026-11-21
+
+- README: document `akapulu_daily_params`, `attach(transport)`, and `wait_until_call_ready`.
+
 ## [0.1.20] - 2026-11-21
 
 - Rename `note_avatar_video_frame` to `_note_avatar_video_frame` (attach-only).
