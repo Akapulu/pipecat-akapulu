@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## [0.1.22] - 2026-11-25
+
+- Depend on `pipecat-ai[daily]` so a bare `pip install pipecat-akapulu` can import.
 - Always use the Akapulu Labs production API origin (no `AKAPULU_API_URL` override).
 
 ## [0.1.21] - 2026-11-21
