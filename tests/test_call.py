@@ -85,7 +85,7 @@ async def _serve(state: dict) -> tuple[web.AppRunner, str]:
     return runner, f"http://127.0.0.1:{port}"
 
 
-_ENV_NAMES = ("DAILY_API_KEY", "AKAPULU_API_KEY", "DAILY_API_URL", "AKAPULU_API_URL")
+_ENV_NAMES = ("DAILY_API_KEY", "AKAPULU_API_KEY", "DAILY_API_URL")
 
 
 def _saved_env() -> dict:
@@ -109,14 +109,17 @@ def _set_env(values: dict) -> None:
 
 
 async def _call(state: dict, **overrides):
+    from pipecat_akapulu import avatar as avatar_mod
+
     runner, origin = await _serve(state)
     saved = _saved_env()
+    saved_origin = avatar_mod._PROD_DJANGO_ORIGIN
+    avatar_mod._PROD_DJANGO_ORIGIN = origin
     _set_env(
         {
             "DAILY_API_KEY": "daily-key",
             "AKAPULU_API_KEY": "akapulu-key",
             "DAILY_API_URL": origin,
-            "AKAPULU_API_URL": origin,
         }
     )
     kwargs = {
@@ -129,6 +132,7 @@ async def _call(state: dict, **overrides):
             kwargs["session"] = session
             return await create_akapulu_call(**kwargs)
     finally:
+        avatar_mod._PROD_DJANGO_ORIGIN = saved_origin
         _restore_env(saved)
         await runner.cleanup()
 
