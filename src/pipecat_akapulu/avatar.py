@@ -12,9 +12,7 @@ tail_secs defaults to 0.
 TTS stop starts that wait, and another loud chunk starts it over. The gate
 locks when the wait finishes.
 
-Worker lookup uses the production Django origin. Set AKAPULU_API_URL to an
-http(s) origin to use another API. A set value that is empty or not http(s)
-raises.
+Worker lookup uses the Akapulu Labs production API.
 
 setup starts the connect in the background and returns. StartFrame is
 forwarded immediately, after a POST of {} to the live-session status
@@ -95,13 +93,7 @@ def _pcm_is_loud(pcm: bytes) -> bool:
 
 
 def _django_origin() -> str:
-    raw = os.environ.get("AKAPULU_API_URL")
-    if raw is None:
-        return _PROD_DJANGO_ORIGIN
-    origin = raw.strip().rstrip("/")
-    if not (origin.startswith("https://") or origin.startswith("http://")):
-        raise RuntimeError("AKAPULU_API_URL must be an http(s) origin")
-    return origin
+    return _PROD_DJANGO_ORIGIN
 
 
 _SESSION_TIMEOUT_SECS = 180.0

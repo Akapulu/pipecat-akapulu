@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Always use the Akapulu Labs production API origin (no `AKAPULU_API_URL` override).
+
 ## [0.1.21] - 2026-11-21
 
 - README: document `akapulu_daily_params`, `attach(transport)`, and `wait_until_call_ready`.

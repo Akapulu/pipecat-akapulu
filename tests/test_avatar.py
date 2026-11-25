@@ -826,81 +826,32 @@ async def test_ingest_rejects_stereo_and_odd_pcm() -> None:
         raise RuntimeError("zero sample rate was accepted")
 
 
-def _with_origin_env(value: str | None):
-    previous = os.environ.get("AKAPULU_API_URL")
-    internal = os.environ.get("INTERNAL_DJANGO_API_URL")
-    environment = os.environ.get("MODAL_ENVIRONMENT")
-    debug = os.environ.get("DEBUG")
-    if value is None:
-        os.environ.pop("AKAPULU_API_URL", None)
-    else:
-        os.environ["AKAPULU_API_URL"] = value
-    os.environ["INTERNAL_DJANGO_API_URL"] = "https://internal.example"
-    os.environ["MODAL_ENVIRONMENT"] = "dev"
-    os.environ["DEBUG"] = "true"
-    return previous, internal, environment, debug
-
-
-def _restore_origin_env(previous, internal, environment, debug) -> None:
-    if previous is None:
-        os.environ.pop("AKAPULU_API_URL", None)
-    else:
-        os.environ["AKAPULU_API_URL"] = previous
-    for key, saved in (
-        ("INTERNAL_DJANGO_API_URL", internal),
-        ("MODAL_ENVIRONMENT", environment),
-        ("DEBUG", debug),
-    ):
-        if saved is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = saved
-
-
 def test_django_origin() -> None:
-    saved = _with_origin_env(None)
+    if _django_origin() != _PROD_DJANGO_ORIGIN:
+        raise RuntimeError("django origin is not the production origin")
+    tap = AkapuluAvatar(session_id=SESSION)
+    url = tap._status_url()
+    suffix = f"/api/live-sessions/{SESSION}/status/"
+    if url != _PROD_DJANGO_ORIGIN + suffix:
+        raise RuntimeError("worker url did not use the production origin")
+    # Internal env names must not redirect the public package.
+    previous = {
+        key: os.environ.get(key)
+        for key in ("INTERNAL_DJANGO_API_URL", "MODAL_ENVIRONMENT", "DEBUG", "AKAPULU_API_URL")
+    }
     try:
+        os.environ["INTERNAL_DJANGO_API_URL"] = "https://internal.example"
+        os.environ["MODAL_ENVIRONMENT"] = "dev"
+        os.environ["DEBUG"] = "true"
+        os.environ["AKAPULU_API_URL"] = "https://example.test"
         if _django_origin() != _PROD_DJANGO_ORIGIN:
-            raise RuntimeError("unset AKAPULU_API_URL did not use the production origin")
-        tap = AkapuluAvatar(session_id=SESSION)
-        url = tap._status_url()
-        suffix = f"/api/live-sessions/{SESSION}/status/"
-        if url != _PROD_DJANGO_ORIGIN + suffix:
-            raise RuntimeError("worker url did not use the production origin")
+            raise RuntimeError("django origin still reads env overrides")
     finally:
-        _restore_origin_env(*saved)
-
-    saved = _with_origin_env("https://example.test/")
-    try:
-        if _django_origin() != "https://example.test":
-            raise RuntimeError("AKAPULU_API_URL override was not used")
-        tap = AkapuluAvatar(session_id=SESSION)
-        url = tap._status_url()
-        expected = f"https://example.test/api/live-sessions/{SESSION}/status/"
-        if url != expected:
-            raise RuntimeError("worker url did not use AKAPULU_API_URL")
-    finally:
-        _restore_origin_env(*saved)
-
-    saved = _with_origin_env("http://127.0.0.1:8000/")
-    try:
-        if _django_origin() != "http://127.0.0.1:8000":
-            raise RuntimeError("http origin was rejected")
-    finally:
-        _restore_origin_env(*saved)
-
-    for bad in ("", "   ", "ftp://example.test", "example.test"):
-        saved = _with_origin_env(bad)
-        try:
-            try:
-                _django_origin()
-            except RuntimeError as exc:
-                if str(exc) != "AKAPULU_API_URL must be an http(s) origin":
-                    raise
+        for key, saved in previous.items():
+            if saved is None:
+                os.environ.pop(key, None)
             else:
-                raise RuntimeError("bad AKAPULU_API_URL was accepted")
-        finally:
-            _restore_origin_env(*saved)
+                os.environ[key] = saved
 
 
 async def test_poll_status_before_the_url() -> None:
@@ -1115,7 +1066,8 @@ def test_engine_joined_post() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
-    saved = _with_origin_env(f"http://{host}:{port}")
+    saved_origin = avatar_mod._PROD_DJANGO_ORIGIN
+    avatar_mod._PROD_DJANGO_ORIGIN = f"http://{host}:{port}"
     try:
         tap = AkapuluAvatar(session_id=SESSION)
         tap._post_engine_joined()
@@ -1135,7 +1087,7 @@ def test_engine_joined_post() -> None:
         else:
             raise RuntimeError("engine joined 500 was accepted")
     finally:
-        _restore_origin_env(*saved)
+        avatar_mod._PROD_DJANGO_ORIGIN = saved_origin
         server.shutdown()
         thread.join(timeout=5)
 
