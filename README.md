@@ -4,8 +4,6 @@ Pipecat processor for an [Akapulu Labs]([REDACTED]) talking avatar. Maintained b
 
 The `AkapuluAvatar` Pipecat plugin sits after your speech model. It sends assistant audio to the Akapulu Labs worker. The worker joins the Daily room for that call and publishes the avatar video and audio. Your voice bot itself does not publish camera or microphone.
 
-Tested with Pipecat 1.14.0, 1.15.0, 1.16.0, and 1.17.0. Requires Pipecat 1.12.0 or newer.
-
 ## Install
 
 ```bash

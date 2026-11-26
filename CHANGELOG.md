@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## [0.1.23] - 2026-11-25
+
+- Package README: drop the Pipecat version-tested / requires line (`pyproject.toml`
+  already depends on `pipecat-ai[daily]>=1.12.0`).
 
 ## [0.1.22] - 2026-11-25
 
